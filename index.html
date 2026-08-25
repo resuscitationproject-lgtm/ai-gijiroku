@@ -37,9 +37,10 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <!-- ★追加：HTMLを本物の .docx ファイルに変換するライブラリ -->
     <script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
+    
+    <!-- ★追加：スリープ防止ライブラリ (iOS Safariフォールバック用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
     
     <style>
         ::-webkit-scrollbar { width: 6px; }
@@ -216,7 +217,7 @@
     <div id="toastContainer" class="fixed top-safe mt-4 left-1/2 transform -translate-x-1/2 z-[60] w-full max-w-sm px-4 pointer-events-none flex flex-col gap-2"></div>
 
     <footer class="bg-white border-t border-gray-200 py-3 text-center shrink-0">
-        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：光井企画工学事務所 バージョン 2.01SP (docx対応)</p>
+        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：光井企画工学事務所　バージョン 2.02SP (スリープ防止対応)</p>
     </footer>
 
     <script>
@@ -237,6 +238,10 @@
         
         let currentFullSummary = ""; 
         let currentFullTranscript = ""; 
+
+        // ★追加：スリープ防止（Wake Lock）用の変数
+        let wakeLock = null;
+        const noSleep = new NoSleep(); // iOS Safari向けフォールバック
 
         // --- DOM要素 ---
         const recordBtn = document.getElementById('recordBtn');
@@ -284,6 +289,13 @@
             
             const savedParticipants = localStorage.getItem('meeting_participants');
             if (savedParticipants) participantsInput.value = savedParticipants;
+
+            // WakeLock再取得リスナー（アプリが裏から戻ってきた時用）
+            document.addEventListener('visibilitychange', async () => {
+                if (wakeLock !== null && document.visibilityState === 'visible' && isRecording) {
+                    await requestWakeLock();
+                }
+            });
         });
 
         apiKeyInput.addEventListener('input', (e) => localStorage.setItem('gemini_api_key_kitakyushu', e.target.value.trim()));
@@ -298,6 +310,29 @@
                 return null;
             }
             return key;
+        }
+
+        // --- スリープ防止機能 (Wake Lock API) ---
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Screen Wake Lock is active');
+                } else {
+                    // 古いiOS向けフォールバック
+                    noSleep.enable();
+                    console.log('NoSleep.js is active');
+                }
+            } catch (err) {
+                console.error(`Wake Lock error: ${err.name}, ${err.message}`);
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock !== null) {
+                wakeLock.release().then(() => { wakeLock = null; });
+            }
+            noSleep.disable();
         }
 
         // --- UI制御 (タブ、モーダル) ---
@@ -432,24 +467,19 @@
             lucide.createIcons();
         }
 
-        // --- ★変更点：本物の .docx 生成とLINE/メール共有 (Web Share API) ---
+        // --- 本物の .docx 生成とLINE/メール共有 ---
         exportDocBtn.addEventListener('click', async () => {
             const el = document.getElementById('summaryContent');
             if (!el || currentFullSummary.trim() === "") { showNotification("出力する議事録がありません。", true); return; }
 
-            // ライブラリを使用して本物のdocxを生成するためのHTMLテンプレート
             const contentHTML = el.innerHTML;
             const sourceHTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>議事録</title></head><body>${contentHTML}</body></html>`;
             
             try {
-                // html-docx-js ライブラリを使って Blob (真のdocxファイル) を生成
                 const blob = htmlDocx.asBlob(sourceHTML, { orientation: 'portrait' });
-                
-                // 拡張子を .docx に変更
                 const fileName = '議事録_' + new Date().toLocaleDateString('ja-JP').replace(/\//g, '') + '.docx';
                 const file = new File([blob], fileName, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
 
-                // iPhone等スマホの場合はネイティブの共有メニューを呼び出す（LINEやメールへ直接送信）
                 if (navigator.canShare && navigator.canShare({ files: [file] })) {
                     await navigator.share({
                         files: [file],
@@ -458,7 +488,6 @@
                     });
                     showNotification("ドキュメントを共有しました。");
                 } 
-                // PCブラウザ等の場合 (フォールバック)
                 else if (window.showSaveFilePicker) {
                     const handle = await window.showSaveFilePicker({ suggestedName: fileName, types: [{ description: 'Wordドキュメント', accept: {'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']} }] });
                     const writable = await handle.createWritable();
@@ -466,7 +495,6 @@
                     await writable.close();
                     showNotification("ドキュメントを保存しました。");
                 } 
-                // その他のレガシー環境 (フォールバック 2)
                 else {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
@@ -475,7 +503,6 @@
                     showNotification("ドキュメントをダウンロードしました。");
                 }
 
-                // ボタンのアニメーション
                 const originalHTML = exportDocBtn.innerHTML;
                 exportDocBtn.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i> <span class="hidden sm:inline">完了</span><span class="sm:hidden">完了</span>';
                 exportDocBtn.className = exportDocBtn.className.replace("text-brand border-brand/30 hover:bg-brand hover:text-white", "text-green-600 border-green-600/30 bg-green-50");
@@ -486,7 +513,7 @@
                     lucide.createIcons();
                 }, 2000);
             } catch (err) { 
-                if (err.name !== 'AbortError') showNotification("出力に失敗しました。ライブラリが読み込めていない可能性があります。", true); 
+                if (err.name !== 'AbortError') showNotification("出力に失敗しました。", true); 
                 console.error(err);
             }
         });
@@ -532,7 +559,7 @@
             }
         });
 
-        // --- 録音・システム音ミックス処理 ---
+        // --- 録音処理 ---
         let currentRecorder = null; 
 
         async function startRecording() {
@@ -570,6 +597,10 @@
 
                 isRecording = true;
                 currentIntervalSeconds = parseInt(intervalSelect.value, 10);
+                
+                // ★追加：録音開始と同時にスリープ防止をリクエスト
+                await requestWakeLock();
+                
                 updateUIState(true, false);
                 recordingLoop(currentApiKey);
 
@@ -590,6 +621,10 @@
 
         function stopRecording() {
             isRecording = false;
+            
+            // ★追加：録音停止時にスリープ防止を解除
+            releaseWakeLock();
+            
             if (chunkTimer) clearTimeout(chunkTimer);
             if (progressInterval) clearInterval(progressInterval);
             if (currentRecorder && currentRecorder.state !== 'inactive') {
