@@ -277,7 +277,7 @@
     <div id="toastContainer" class="fixed top-safe mt-4 left-1/2 transform -translate-x-1/2 z-[60] w-full max-w-sm px-4 pointer-events-none flex flex-col gap-2"></div>
 
     <footer class="bg-white border-t border-gray-200 py-3 text-center shrink-0">
-        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：光井企画工学事務所　バージョン 2.05SP (出力選択・スリープ防止対応)</p>
+        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：光井企画工学事務所　バージョン 2.06SP (出力選択・スリープ防止対応)</p>
     </footer>
 
     <script>
@@ -298,6 +298,9 @@
         
         let currentFullSummary = ""; 
         let currentFullTranscript = ""; 
+        let cachedDocxSummary = '';
+        let cachedDocxBlob = null;
+        let cachedDocxPromise = null;
 
         // ★追加：スリープ防止（Wake Lock）用の変数
         let wakeLock = null;
@@ -636,35 +639,69 @@
         async function exportAndShareFile(blob, extension, mimeType) {
             const fileName = '議事録_' + new Date().toLocaleDateString('ja-JP').replace(/\//g, '') + extension;
             const file = new File([blob], fileName, { type: mimeType });
+            exportMenu.classList.remove('show');
+            let completed = false;
 
-            try {
-                if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                    await navigator.share({
-                        files: [file],
-                        title: 'AI議事録',
-                        text: '作成された議事録ドキュメントです。'
-                    });
-                    showNotification("ドキュメントを共有しました。");
-                } 
-                else if (window.showSaveFilePicker) {
-                    const handle = await window.showSaveFilePicker({ 
-                        suggestedName: fileName, 
-                        types: [{ description: 'ドキュメント', accept: { [mimeType] : [extension] } }] 
+            // 共有APIが利用可能でも、ユーザー操作判定や共有先の都合で失敗することがある。
+            if (navigator.share && navigator.canShare) {
+                try {
+                    if (navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                            files: [file],
+                            title: 'AI議事録',
+                            text: '作成された議事録ドキュメントです。'
+                        });
+                        showNotification('ドキュメントを共有しました。');
+                        completed = true;
+                    }
+                } catch (err) {
+                    if (err.name === 'AbortError') return false;
+                    console.warn('Web Share API failed. Falling back to file save.', err);
+                }
+            }
+
+            // 共有できなければ、対応ブラウザではファイル保存ダイアログを試す。
+            if (!completed && window.showSaveFilePicker) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: fileName,
+                        types: [{ description: 'ドキュメント', accept: { [mimeType]: [extension] } }]
                     });
                     const writable = await handle.createWritable();
                     await writable.write(blob);
                     await writable.close();
-                    showNotification("ドキュメントを保存しました。");
-                } 
-                else {
+                    showNotification('ドキュメントを保存しました。');
+                    completed = true;
+                } catch (err) {
+                    if (err.name === 'AbortError') return false;
+                    console.warn('File System Access API failed. Falling back to download.', err);
+                }
+            }
+
+            // 最後は必ず通常ダウンロードを試す。
+            if (!completed) {
+                try {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
-                    a.href = url; a.download = fileName;
-                    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                    showNotification("ドキュメントをダウンロードしました。");
+                    a.href = url;
+                    a.download = fileName;
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    // click直後に破棄するとブラウザによっては0バイトになるため遅延させる。
+                    setTimeout(() => URL.revokeObjectURL(url), 60000);
+                    showNotification('ドキュメントをダウンロードしました。Googleドライブへアップロードできます。');
+                    completed = true;
+                } catch (err) {
+                    console.error('Download fallback failed.', err);
+                    showNotification(`出力に失敗しました。\n${err.message}`, true);
+                    return false;
                 }
+            }
 
-                // ボタンのアニメーション (ドロップダウンボタン自体を変化させる)
+            if (completed) {
+                // ボタンのアニメーション
                 const originalHTML = exportDropdownBtn.innerHTML;
                 exportDropdownBtn.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i> <span class="hidden sm:inline">完了</span><span class="sm:hidden">完了</span>';
                 exportDropdownBtn.className = exportDropdownBtn.className.replace("text-brand border-brand/30 hover:bg-brand hover:text-white", "text-green-600 border-green-600/30 bg-green-50");
@@ -674,10 +711,8 @@
                     exportDropdownBtn.className = exportDropdownBtn.className.replace("text-green-600 border-green-600/30 bg-green-50", "text-brand border-brand/30 hover:bg-brand hover:text-white");
                     if (typeof lucide !== 'undefined') lucide.createIcons();
                 }, 2000);
-            } catch (err) { 
-                if (err.name !== 'AbortError') showNotification("出力に失敗しました。", true); 
-                console.error(err);
             }
+            return completed;
         }
 
 
@@ -828,16 +863,43 @@
             return Packer.toBlob(documentFile);
         }
 
+        function prepareDocxCache(markdown) {
+            const source = String(markdown || '');
+            if (cachedDocxSummary === source && cachedDocxBlob) {
+                return Promise.resolve(cachedDocxBlob);
+            }
+            if (cachedDocxSummary === source && cachedDocxPromise) {
+                return cachedDocxPromise;
+            }
+
+            cachedDocxSummary = source;
+            cachedDocxBlob = null;
+            cachedDocxPromise = createStandardDocxBlob(source)
+                .then(blob => {
+                    if (cachedDocxSummary === source) cachedDocxBlob = blob;
+                    return blob;
+                })
+                .catch(error => {
+                    if (cachedDocxSummary === source) {
+                        cachedDocxSummary = '';
+                        cachedDocxBlob = null;
+                        cachedDocxPromise = null;
+                    }
+                    throw error;
+                });
+            return cachedDocxPromise;
+        }
+
         exportDocxBtn.addEventListener('click', async () => {
             if (!currentFullSummary.trim()) {
                 showNotification('出力する議事録がありません。', true);
                 return;
             }
 
-            exportMenu.classList.remove('show');
             try {
-                showNotification('Wordファイルを生成しています...');
-                const blob = await createStandardDocxBlob(currentFullSummary);
+                const isReady = cachedDocxSummary === currentFullSummary && cachedDocxBlob;
+                if (!isReady) showNotification('Wordファイルを生成しています...');
+                const blob = isReady ? cachedDocxBlob : await prepareDocxCache(currentFullSummary);
                 if (!blob || blob.size < 1000) throw new Error('生成されたWordファイルが空です。');
                 await exportAndShareFile(blob, '.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
             } catch (err) {
@@ -895,6 +957,7 @@
             if (isRecording || isProcessingFile) { showNotification("処理中はリセットできません。", true); closeSettingsModal(); return; }
             if (confirm("これまでの文字起こしと議事録データがすべて消去されます。よろしいですか？")) {
                 processCounter = 0; currentFullSummary = ""; currentFullTranscript = ""; processCountSpan.textContent = `0回更新`;
+                cachedDocxSummary = ''; cachedDocxBlob = null; cachedDocxPromise = null;
                 transcriptArea.innerHTML = `<p class="text-gray-400 italic text-xs sm:text-sm text-center mt-10" id="transcriptPlaceholder">録音を開始すると、ここに文字起こしが追加されます。</p>`;
                 summaryContent.innerHTML = `<p class="text-gray-400 italic text-xs sm:text-sm text-center mt-10" id="summaryPlaceholder">音声の解析が進むと、最新の議事録がここに生成されます。</p>`;
                 closeSettingsModal();
@@ -1174,6 +1237,8 @@ ${currentFullSummary || "まだ議事録はありません。今回の音声か�
                     const normalizedSummary = normalizeSummaryMarkdown(result.summary);
                     if (normalizedSummary && !normalizedSummary.includes("エラーにより")) {
                         currentFullSummary = normalizedSummary;
+                        // 表示更新後にDOCXを事前生成し、共有ボタン押下時のユーザー操作判定切れを防ぐ。
+                        prepareDocxCache(currentFullSummary).catch(error => console.warn('DOCX pre-generation failed.', error));
                     }
                     appendResults(result.transcript || '', normalizedSummary, chunkIndex);
                     return true;
