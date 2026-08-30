@@ -225,6 +225,9 @@
                         <input type="text" id="participantsInput" placeholder="例: 山田, 佐藤, 鈴木" class="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-brand focus:border-brand">
                         <p class="text-[10px] text-gray-500 mt-1">※事前に入力するとAIの文字起こしや要約の精度が向上します。</p>
                     </div>
+                    <button id="clearMeetingInfoBtn" type="button" class="w-full flex items-center justify-center gap-1.5 py-2 border border-gray-300 bg-white text-gray-600 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors text-xs font-bold">
+                        <i data-lucide="eraser" class="w-3.5 h-3.5"></i> 記憶したテーマ・参加者を消去
+                    </button>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
@@ -321,6 +324,7 @@
         const clearApiKeyBtn = document.getElementById('clearApiKeyBtn');
         const themeInput = document.getElementById('themeInput');
         const participantsInput = document.getElementById('participantsInput');
+        const clearMeetingInfoBtn = document.getElementById('clearMeetingInfoBtn');
         const modeSelect = document.getElementById('modeSelect');
         const intervalSelect = document.getElementById('intervalSelect');
         const modalResetBtn = document.getElementById('modalResetBtn');
@@ -380,6 +384,13 @@
         });
         themeInput.addEventListener('input', (e) => localStorage.setItem('meeting_theme', e.target.value.trim()));
         participantsInput.addEventListener('input', (e) => localStorage.setItem('meeting_participants', e.target.value.trim()));
+        clearMeetingInfoBtn.addEventListener('click', () => {
+            localStorage.removeItem('meeting_theme');
+            localStorage.removeItem('meeting_participants');
+            themeInput.value = '';
+            participantsInput.value = '';
+            showNotification('記憶した会議テーマと参加者名を消去しました。');
+        });
 
         function getApiKey() {
             const key = apiKeyInput.value.trim();
