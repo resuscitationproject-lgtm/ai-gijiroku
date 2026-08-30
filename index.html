@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-title" content="AI議事録">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     
-    <title>北九州ITクラブ 音声解析リアルタイム議事録</title>
+    <title>北九州AIクラブ 音声解析リアルタイム議事録 (v3.01SP)</title>
     
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>
@@ -37,7 +37,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
-    <!-- Google Docs互換のOOXMLを生成するDOCXライブラリ -->
+    <!-- Google Docs互換OOXML生成用DOCXライブラリ -->
     <script src="https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.iife.js"></script>
     <!-- スリープ防止ライブラリ (iOS Safariフォールバック用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
@@ -77,7 +77,9 @@
             animation: fadeIn 0.2s ease-in;
         }
         #summaryContent { overflow-wrap: anywhere; word-break: normal; }
-        #summaryContent table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+        #summaryContent table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; margin-bottom: 1rem; border-collapse: collapse; }
+        #summaryContent th, #summaryContent td { border: 1px solid #cbd5e1; padding: 6px 12px; }
+        #summaryContent th { background-color: #f1f5f9; }
         #summaryContent pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
         #summaryContent img { max-width: 100%; height: auto; }
     </style>
@@ -90,7 +92,7 @@
                 <i data-lucide="mic-2" class="w-5 h-5"></i>
             </div>
             <div>
-                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール</h1>
+                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール <span class="text-xs font-normal text-gray-500">v3.01SP</span></h1>
             </div>
         </div>
         
@@ -248,7 +250,7 @@
         </div>
     </div>
 
-    <!-- マイク利用不可の案内モーダル -->
+    <!-- マイク利用不可案内モーダル -->
     <div id="micHelpModal" class="fixed inset-0 bg-gray-900/50 hidden flex items-center justify-center z-[70] p-4 backdrop-blur-sm">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
             <div class="flex justify-between items-center p-4 border-b border-gray-100">
@@ -265,11 +267,10 @@
         </div>
     </div>
 
-    <!-- 通知アラート領域 -->
     <div id="toastContainer" class="fixed top-safe mt-4 left-1/2 transform -translate-x-1/2 z-[60] w-full max-w-sm px-4 pointer-events-none flex flex-col gap-2"></div>
 
     <footer class="bg-white border-t border-gray-200 py-3 text-center shrink-0">
-        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：光井企画工学事務所　バージョン 2.06SP (出力選択・スリープ防止対応)</p>
+        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：北九州AIクラブ／光井企画工学事務所　バージョン 3.01SP (高精度プロンプト対応)</p>
     </footer>
 
     <script>
@@ -294,11 +295,11 @@
         let cachedDocxBlob = null;
         let cachedDocxPromise = null;
 
-        // スリープ防止（Wake Lock）用の変数
+        // スリープ防止 (Wake Lock API / NoSleep.js)
         let wakeLock = null;
         const noSleep = typeof NoSleep !== 'undefined' ? new NoSleep() : null;
 
-        // --- DOM要素 ---
+        // DOM要素
         const recordBtn = document.getElementById('recordBtn');
         const recordIcon = document.getElementById('recordIcon');
         const recordText = document.getElementById('recordText');
@@ -348,7 +349,7 @@
             marked.setOptions({ gfm: true, breaks: true });
         }
 
-        // --- 初期設定とストレージ ---
+        // --- STREAMING_CHUNK:Setting up local storage and event listeners... ---
         document.addEventListener('DOMContentLoaded', () => {
             const savedKey = localStorage.getItem('gemini_api_key_kitakyushu');
             if (savedKey) apiKeyInput.value = savedKey;
@@ -392,7 +393,7 @@
             return key;
         }
 
-        // --- スリープ防止機能 (Wake Lock API) ---
+        // --- スリープ防止 (Wake Lock) ---
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
@@ -412,7 +413,7 @@
             if (noSleep) noSleep.disable();
         }
 
-        // --- UI制御 (タブ、モーダル) ---
+        // --- STREAMING_CHUNK:Handling UI state updates and tab switching... ---
         function switchTab(showPanel) {
             if (window.innerWidth >= 1024) return;
             if (showPanel === 'transcript') {
@@ -481,26 +482,25 @@
 
             if (policyBlocked || (isGasFrame && permissionState !== 'denied')) {
                 micHelpMessage.innerHTML = `
-                    <p class="font-bold mb-2">GASのセキュリティ制約でマイクが遮断されています。</p>
-                    <p>現在のGoogle Apps Script Webアプリはサンドボックスiframe内で表示され、親フレームからマイク利用が許可されない場合があります。この場合、ブラウザのマイク設定を「許可」にしてもアプリ側のコードからは解除できません。</p>
-                    <p class="mt-2">マイク録音を使うには、この画面をGASではなく外部のHTTPSサイトへ配置してください。GAS版では音声ファイルのアップロードをご利用ください。</p>`;
+                    <p class="font-bold mb-2">セキュリティ制約でマイクが遮断されています。</p>
+                    <p>Google Apps Script等のWebアプリがiframe内で表示されている場合、親フレームからマイク利用が許可されないことがあります。</p>
+                    <p class="mt-2">マイク録音を行うには、本ページを直接開くか、音声ファイルのアップロードをご利用ください。</p>`;
             } else if (permissionState === 'denied') {
                 micHelpMessage.innerHTML = `
-                    <p class="font-bold mb-2">このサイトのマイク権限がブラウザで拒否されています。</p>
+                    <p class="font-bold mb-2">マイク権限がブラウザで拒否されています。</p>
                     <ol class="list-decimal pl-5 space-y-1">
-                        <li>アドレスバー左側のサイト情報アイコンを開く</li>
-                        <li>「サイトの設定」でマイクを「許可」にする</li>
-                        <li>このページを再読み込みして、もう一度「開始」を押す</li>
+                        <li>アドレスバー左側のサイト設定アイコンを開く</li>
+                        <li>マイクを「許可」に変更する</li>
+                        <li>ページを再読み込みして再試行する</li>
                     </ol>`;
             } else if (!window.isSecureContext || !navigator.mediaDevices) {
-                micHelpMessage.innerHTML = '<p>マイク録音にはHTTPSで開かれた対応ブラウザが必要です。ChromeまたはEdgeの最新版で、デプロイ済みURLを直接開いてください。</p>';
+                micHelpMessage.innerHTML = '<p>マイク録音にはHTTPS環境（SSL保護）が必要です。対応ブラウザで開いてください。</p>';
             } else {
                 micHelpMessage.innerHTML = `
-                    <p>ブラウザまたはOSがマイク利用を拒否しました。</p>
+                    <p>ブラウザまたはOSがマイクアクセスを拒否しました。</p>
                     <ol class="list-decimal pl-5 mt-2 space-y-1">
-                        <li>Chromeのサイト設定でマイクを許可する</li>
-                        <li>Windowsの「設定 → プライバシーとセキュリティ → マイク」で、デスクトップアプリのアクセスを許可する</li>
-                        <li>Chromeを再起動して再試行する</li>
+                        <li>ブラウザの設定でマイク許可を確認</li>
+                        <li>OSのプライバシー設定でマイク権限をオンにする</li>
                     </ol>`;
             }
 
@@ -509,7 +509,7 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        // --- 通知機能 ---
+        // ---STREAMING_CHUNK:Implementing toast notification system... ---
         function showNotification(msg, isError = false) {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
@@ -536,7 +536,6 @@
             return '';
         }
 
-        // --- UI更新 ---
         function updateUIState(recording, isFile = false) {
             if (recording) {
                 recordIcon.setAttribute('data-lucide', 'square');
@@ -599,7 +598,7 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        // --- ドロップダウンメニューの制御 ---
+        // --- STREAMING_CHUNK:Managing document export dropdown and DOCX generation... ---
         exportDropdownBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             exportMenu.classList.toggle('show');
@@ -704,7 +703,7 @@
 
         async function createStandardDocxBlob(markdown) {
             if (typeof docx === 'undefined') {
-                throw new Error('DOCX生成ライブラリを読み込めませんでした。通信状態を確認してください。');
+                throw new Error('DOCXライブラリを読み込めませんでした。通信状態を確認してください。');
             }
 
             const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
@@ -909,7 +908,7 @@
             }
         });
 
-        // --- 録音処理 ---
+        // --- STREAMING_CHUNK:Handling audio recording loops and media streams... ---
         let currentRecorder = null;
         let processingQueue = Promise.resolve();
 
@@ -1078,7 +1077,7 @@
             }
         });
 
-        // --- Gemini API連携 ---
+        // --- STREAMING_CHUNK:Executing Gemini API calls with optimized prompt v3.01SP... ---
         function blobToBase64(blob) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1125,26 +1124,36 @@
             loadingToast.classList.remove('opacity-0');
             const pTheme = themeInput.value.trim();
             const pUsers = participantsInput.value.trim();
-            
-            let contextStr = "";
-            if (pTheme) contextStr += `\n【会議のテーマ】\n${pTheme}\n`;
-            if (pUsers) contextStr += `\n【主な参加者】\n${pUsers}\n`;
 
             try {
                 const base64Audio = await blobToBase64(blob);
                 const cleanMimeType = audioType.split(';')[0]; 
 
-                const prompt = `あなたは優秀な議事録作成アシスタントです。
-これまで作成された「現在の全体議事録」と、「新しく録音された音声セグメント」が提供されます。
-${contextStr}
-【指示】
-1. 文字起こし: 今回の音声セグメントを正確に文字起こししてください。文脈や【主な参加者】の情報を活用して話者を識別し「話者A: 〇〇」のように明記してください。
-2. 議事録の更新: 【現在の全体議事録】の内容をベースに、今回の音声の内容を追加・統合して、最新の「1つの統合された議事録」を作成してください。
-   - **詳細な記録**: 過度な要約は避け、議論のプロセスや懸念点を具体的に残すこと。
-   - **構造化**: 必ずMarkdownの階層構造（「会議の目的」「議論の詳細」「決定事項」「今後のToDo」など）を維持し、最後まで出力しきること（途中でフォーマットを崩さない）。
+                // v3.01SP 高精度最適化プロンプト
+                const prompt = `あなたは高精度な議事録作成アシスタントです。
+提供された【今回の音声セグメント】を正確に文字起こしし、【現在の全体議事録】に新情報を正確に統合して最新の「1つの統合された議事録」を作成してください。
+
+【会議情報】
+- テーマ: ${pTheme || "特に設定なし"}
+- 参加者: ${pUsers || "特に設定なし"}
+
+【最重要ルール（厳格遵守）】
+1. ファクト優先: 音声から確認できない内容を絶対推測・補完しない。聞き取り不明な箇所は「[聞き取り不明]」と記載する。
+2. 慎重な話者識別: 確信がない場合は人名を勝手に確定せず「話者A:」「話者B:」とする。文脈から同一人物と判断できる場合は全体の表記を統一する。
+3. 過去ログの保護と詳細化: 過去の議事録を不用意に削除・要約・縮小しない。背景・課題・提案・質問回答・懸念・判断理由・数値・日程などの議論の経緯を詳細に残すこと。
+4. 決定事項とToDoの厳格性: 単なる提案や検討案を「決定事項」や「ToDo」にしない。明確に合意されたもののみ記録し、担当者や期限が不明なToDoは「未定」とする。
+
+【出力形式】
+1. 文字起こし (transcript): フィラー（あー、えー等）を除去し、話者名付きで今回の音声セグメントを正確に記録する。
+2. 統合議事録 (summary): Markdown形式で以下の階層構造を必ず維持し、最後まで出力しきること。
+   # 1. 会議概要・目的
+   # 2. 議論の詳細（2.1 議題名、背景、提案、意見、懸念、判断理由等）
+   # 3. 決定事項（明確に合意された事項のみ）
+   # 4. 未決・継続検討事項
+   # 5. 今後のToDo（表形式またはリスト：タスク / 担当者 / 期限 / 補足）
 
 【現在の全体議事録】
-${currentFullSummary || "まだ議事録はありません。今回の音声から議事録の作成を開始してください。"}
+${currentFullSummary || "まだ議事録はありません。今回の音声から作成を開始してください。"}
 `;
 
                 const payload = {
@@ -1155,7 +1164,7 @@ ${currentFullSummary || "まだ議事録はありません。今回の音声か�
                         responseSchema: {
                             type: "OBJECT",
                             properties: {
-                                transcript: { type: "STRING", description: "話者名を含めた文字起こし" },
+                                transcript: { type: "STRING", description: "話者名を含めた今回の音声の文字起こしテキスト" },
                                 summary: { type: "STRING", description: "統合・更新された最新の全体議事録(Markdown形式)" }
                             },
                             required: ["transcript", "summary"]
@@ -1189,6 +1198,7 @@ ${currentFullSummary || "まだ議事録はありません。今回の音声か�
             } finally { loadingToast.classList.add('opacity-0'); }
         }
 
+        // --- STREAMING_CHUNK:Parsing and sanitizing response data... ---
         function parseGeminiStructuredResponse(responseText) {
             let jsonText = String(responseText || '')
                 .replace(/^```json\s*/i, '')
