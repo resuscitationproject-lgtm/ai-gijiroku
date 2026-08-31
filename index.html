@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-title" content="AI議事録">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     
-    <title>北九州AIクラブ 音声解析リアルタイム議事録 (v3.01SP)</title>
+    <title>北九州AIクラブ 音声解析リアルタイム議事録 (v3.02SP)</title>
     
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>
@@ -37,9 +37,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
-    <!-- Google Docs互換OOXML生成用DOCXライブラリ -->
     <script src="https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.iife.js"></script>
-    <!-- スリープ防止ライブラリ (iOS Safariフォールバック用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
     
     <style>
@@ -92,7 +90,7 @@
                 <i data-lucide="mic-2" class="w-5 h-5"></i>
             </div>
             <div>
-                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール <span class="text-xs font-normal text-gray-500">v3.01SP</span></h1>
+                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール <span class="text-xs font-normal text-gray-500">v3.02SP (3.5 Transcribe対応)</span></h1>
             </div>
         </div>
         
@@ -209,6 +207,16 @@
                         <button id="clearApiKeyBtn" type="button" class="text-[10px] text-red-600 hover:underline whitespace-nowrap">保存キーを消去</button>
                     </div>
                 </div>
+
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">音声認識エンジン</label>
+                    <select id="engineSelect" class="w-full border border-gray-300 rounded-lg p-2 text-sm bg-blue-50 font-medium text-brand-dark">
+                        <option value="gemini-3.5-transcribe" selected>✨ Gemini 3.5 Transcribe (爆速・高精度言い直し補正)</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (従来標準)</option>
+                    </select>
+                    <p class="text-[10px] text-gray-500 mt-1">※3.5 Transcribeはフィラー除去や言い間違い補正（Smart Transcription）に対応しています。</p>
+                </div>
+
                 <div class="bg-brand-light/50 p-3 rounded-lg border border-brand/10 space-y-3">
                     <div>
                         <label class="block text-sm font-bold text-brand-dark mb-1">会議のテーマ・目的</label>
@@ -270,7 +278,7 @@
     <div id="toastContainer" class="fixed top-safe mt-4 left-1/2 transform -translate-x-1/2 z-[60] w-full max-w-sm px-4 pointer-events-none flex flex-col gap-2"></div>
 
     <footer class="bg-white border-t border-gray-200 py-3 text-center shrink-0">
-        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：北九州AIクラブ／光井企画工学事務所　バージョン 3.01SP (高精度プロンプト対応)</p>
+        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：北九州AIクラブ／光井企画工学事務所　バージョン 3.02SP (Gemini 3.5 Transcribe搭載)</p>
     </footer>
 
     <script>
@@ -295,7 +303,7 @@
         let cachedDocxBlob = null;
         let cachedDocxPromise = null;
 
-        // スリープ防止 (Wake Lock API / NoSleep.js)
+        // スリープ防止
         let wakeLock = null;
         const noSleep = typeof NoSleep !== 'undefined' ? new NoSleep() : null;
 
@@ -317,6 +325,7 @@
         const closeSettingsBtn = document.getElementById('closeSettingsBtn');
         const apiKeyInput = document.getElementById('apiKeyInput');
         const clearApiKeyBtn = document.getElementById('clearApiKeyBtn');
+        const engineSelect = document.getElementById('engineSelect');
         const themeInput = document.getElementById('themeInput');
         const participantsInput = document.getElementById('participantsInput');
         const clearMeetingInfoBtn = document.getElementById('clearMeetingInfoBtn');
@@ -349,11 +358,14 @@
             marked.setOptions({ gfm: true, breaks: true });
         }
 
-        // --- STREAMING_CHUNK:Setting up local storage and event listeners... ---
+        // --- 初期化 ---
         document.addEventListener('DOMContentLoaded', () => {
             const savedKey = localStorage.getItem('gemini_api_key_kitakyushu');
             if (savedKey) apiKeyInput.value = savedKey;
             
+            const savedEngine = localStorage.getItem('transcribe_engine');
+            if (savedEngine) engineSelect.value = savedEngine;
+
             const savedTheme = localStorage.getItem('meeting_theme');
             if (savedTheme) themeInput.value = savedTheme;
             
@@ -368,6 +380,7 @@
         });
 
         apiKeyInput.addEventListener('input', (e) => localStorage.setItem('gemini_api_key_kitakyushu', e.target.value.trim()));
+        engineSelect.addEventListener('change', (e) => localStorage.setItem('transcribe_engine', e.target.value));
         clearApiKeyBtn.addEventListener('click', () => {
             localStorage.removeItem('gemini_api_key_kitakyushu');
             apiKeyInput.value = '';
@@ -413,7 +426,6 @@
             if (noSleep) noSleep.disable();
         }
 
-        // --- STREAMING_CHUNK:Handling UI state updates and tab switching... ---
         function switchTab(showPanel) {
             if (window.innerWidth >= 1024) return;
             if (showPanel === 'transcript') {
@@ -459,57 +471,6 @@
         closeMicHelpBtn.addEventListener('click', closeMicHelpModal);
         closeMicHelpMainBtn.addEventListener('click', closeMicHelpModal);
 
-        function isMicrophoneBlockedByPolicy() {
-            try {
-                const policy = document.permissionsPolicy || document.featurePolicy;
-                return !!(policy && typeof policy.allowsFeature === 'function' && !policy.allowsFeature('microphone'));
-            } catch (error) {
-                return false;
-            }
-        }
-
-        async function showMicrophoneHelp(error) {
-            let permissionState = 'unknown';
-            try {
-                if (navigator.permissions && navigator.permissions.query) {
-                    const result = await navigator.permissions.query({ name: 'microphone' });
-                    permissionState = result.state;
-                }
-            } catch (e) {}
-
-            const policyBlocked = isMicrophoneBlockedByPolicy();
-            const isGasFrame = window.self !== window.top;
-
-            if (policyBlocked || (isGasFrame && permissionState !== 'denied')) {
-                micHelpMessage.innerHTML = `
-                    <p class="font-bold mb-2">セキュリティ制約でマイクが遮断されています。</p>
-                    <p>Google Apps Script等のWebアプリがiframe内で表示されている場合、親フレームからマイク利用が許可されないことがあります。</p>
-                    <p class="mt-2">マイク録音を行うには、本ページを直接開くか、音声ファイルのアップロードをご利用ください。</p>`;
-            } else if (permissionState === 'denied') {
-                micHelpMessage.innerHTML = `
-                    <p class="font-bold mb-2">マイク権限がブラウザで拒否されています。</p>
-                    <ol class="list-decimal pl-5 space-y-1">
-                        <li>アドレスバー左側のサイト設定アイコンを開く</li>
-                        <li>マイクを「許可」に変更する</li>
-                        <li>ページを再読み込みして再試行する</li>
-                    </ol>`;
-            } else if (!window.isSecureContext || !navigator.mediaDevices) {
-                micHelpMessage.innerHTML = '<p>マイク録音にはHTTPS環境（SSL保護）が必要です。対応ブラウザで開いてください。</p>';
-            } else {
-                micHelpMessage.innerHTML = `
-                    <p>ブラウザまたはOSがマイクアクセスを拒否しました。</p>
-                    <ol class="list-decimal pl-5 mt-2 space-y-1">
-                        <li>ブラウザの設定でマイク許可を確認</li>
-                        <li>OSのプライバシー設定でマイク権限をオンにする</li>
-                    </ol>`;
-            }
-
-            console.error('Microphone error:', error);
-            micHelpModal.classList.remove('hidden');
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-        }
-
-        // ---STREAMING_CHUNK:Implementing toast notification system... ---
         function showNotification(msg, isError = false) {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
@@ -598,7 +559,6 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        // --- STREAMING_CHUNK:Managing document export dropdown and DOCX generation... ---
         exportDropdownBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             exportMenu.classList.toggle('show');
@@ -629,7 +589,6 @@
                     }
                 } catch (err) {
                     if (err.name === 'AbortError') return false;
-                    console.warn('Web Share API failed. Falling back to file save.', err);
                 }
             }
 
@@ -646,7 +605,6 @@
                     completed = true;
                 } catch (err) {
                     if (err.name === 'AbortError') return false;
-                    console.warn('File System Access API failed. Falling back to download.', err);
                 }
             }
 
@@ -664,251 +622,13 @@
                     showNotification('ドキュメントをダウンロードしました。');
                     completed = true;
                 } catch (err) {
-                    console.error('Download fallback failed.', err);
                     showNotification(`出力に失敗しました。\n${err.message}`, true);
                     return false;
                 }
             }
-
-            if (completed) {
-                const originalHTML = exportDropdownBtn.innerHTML;
-                exportDropdownBtn.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i> <span class="hidden sm:inline">完了</span><span class="sm:hidden">完了</span>';
-                exportDropdownBtn.className = exportDropdownBtn.className.replace("text-brand border-brand/30 hover:bg-brand hover:text-white", "text-green-600 border-green-600/30 bg-green-50");
-                if (typeof lucide !== 'undefined') lucide.createIcons();
-                setTimeout(() => {
-                    exportDropdownBtn.innerHTML = originalHTML;
-                    exportDropdownBtn.className = exportDropdownBtn.className.replace("text-green-600 border-green-600/30 bg-green-50", "text-brand border-brand/30 hover:bg-brand hover:text-white");
-                    if (typeof lucide !== 'undefined') lucide.createIcons();
-                }, 2000);
-            }
             return completed;
         }
 
-        function markdownInlineToDocxRuns(text, TextRun) {
-            const normalized = String(text || '')
-                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
-                .replace(/~~([^~]+)~~/g, '$1')
-                .replace(/`([^`]+)`/g, '$1');
-
-            return normalized.split(/(\*\*[^*]+\*\*)/g)
-                .filter(Boolean)
-                .map(part => {
-                    const bold = part.startsWith('**') && part.endsWith('**');
-                    return new TextRun({
-                        text: bold ? part.slice(2, -2) : part,
-                        bold
-                    });
-                });
-        }
-
-        async function createStandardDocxBlob(markdown) {
-            if (typeof docx === 'undefined') {
-                throw new Error('DOCXライブラリを読み込めませんでした。通信状態を確認してください。');
-            }
-
-            const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
-
-            const paragraphs = [
-                new Paragraph({
-                    text: 'AI議事録',
-                    heading: HeadingLevel.TITLE,
-                    alignment: AlignmentType.CENTER,
-                    spacing: { after: 120 }
-                }),
-                new Paragraph({
-                    children: [new TextRun({ text: `出力日時：${new Date().toLocaleString('ja-JP')}`, color: '666666', size: 18 })],
-                    alignment: AlignmentType.RIGHT,
-                    spacing: { after: 300 }
-                })
-            ];
-
-            let inCodeBlock = false;
-            String(markdown || '').replace(/\r\n/g, '\n').split('\n').forEach(rawLine => {
-                const line = rawLine.replace(/\t/g, '    ');
-                const trimmed = line.trim();
-
-                if (/^```/.test(trimmed)) {
-                    inCodeBlock = !inCodeBlock;
-                    return;
-                }
-                if (!trimmed) {
-                    paragraphs.push(new Paragraph({ text: '', spacing: { after: 40 } }));
-                    return;
-                }
-
-                const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-                if (heading) {
-                    const levels = [
-                        HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3,
-                        HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6
-                    ];
-                    paragraphs.push(new Paragraph({
-                        children: markdownInlineToDocxRuns(heading[2], TextRun),
-                        heading: levels[heading[1].length - 1],
-                        keepNext: true,
-                        spacing: { before: 240, after: 120 }
-                    }));
-                    return;
-                }
-
-                if (/^([-*_])\1\1+$/.test(trimmed)) {
-                    paragraphs.push(new Paragraph({ thematicBreak: true }));
-                    return;
-                }
-
-                const bullet = line.match(/^(\s*)[-+*]\s+(.+)$/);
-                if (bullet) {
-                    const level = Math.min(Math.floor(bullet[1].length / 2), 5);
-                    paragraphs.push(new Paragraph({
-                        children: markdownInlineToDocxRuns(bullet[2], TextRun),
-                        bullet: { level },
-                        spacing: { after: 80 }
-                    }));
-                    return;
-                }
-
-                const numbered = line.match(/^(\s*)(\d+)[.)]\s+(.+)$/);
-                if (numbered) {
-                    const level = Math.min(Math.floor(numbered[1].length / 2), 5);
-                    paragraphs.push(new Paragraph({
-                        children: markdownInlineToDocxRuns(`${numbered[2]}. ${numbered[3]}`, TextRun),
-                        indent: { left: 360 * (level + 1), hanging: 240 },
-                        spacing: { after: 80 }
-                    }));
-                    return;
-                }
-
-                const quote = trimmed.match(/^>\s?(.*)$/);
-                if (quote) {
-                    paragraphs.push(new Paragraph({
-                        children: [new TextRun({ text: quote[1], italics: true, color: '555555' })],
-                        indent: { left: 480 },
-                        spacing: { after: 100 }
-                    }));
-                    return;
-                }
-
-                paragraphs.push(new Paragraph({
-                    children: inCodeBlock
-                        ? [new TextRun({ text: trimmed, font: 'Consolas', size: 19 })]
-                        : markdownInlineToDocxRuns(trimmed, TextRun),
-                    spacing: { after: 120, line: 360 }
-                }));
-            });
-
-            const documentFile = new DocxDocument({
-                creator: 'AI議事録ツール',
-                title: 'AI議事録',
-                description: 'Geminiで生成した議事録',
-                styles: {
-                    default: {
-                        document: {
-                            run: { font: 'Yu Gothic', size: 22 },
-                            paragraph: { spacing: { line: 360, after: 120 } }
-                        }
-                    }
-                },
-                sections: [{
-                    properties: { page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } } },
-                    children: paragraphs
-                }]
-            });
-
-            return Packer.toBlob(documentFile);
-        }
-
-        function prepareDocxCache(markdown) {
-            const source = String(markdown || '');
-            if (cachedDocxSummary === source && cachedDocxBlob) return Promise.resolve(cachedDocxBlob);
-            if (cachedDocxSummary === source && cachedDocxPromise) return cachedDocxPromise;
-
-            cachedDocxSummary = source;
-            cachedDocxBlob = null;
-            cachedDocxPromise = createStandardDocxBlob(source)
-                .then(blob => {
-                    if (cachedDocxSummary === source) cachedDocxBlob = blob;
-                    return blob;
-                })
-                .catch(error => {
-                    if (cachedDocxSummary === source) {
-                        cachedDocxSummary = ''; cachedDocxBlob = null; cachedDocxPromise = null;
-                    }
-                    throw error;
-                });
-            return cachedDocxPromise;
-        }
-
-        exportDocxBtn.addEventListener('click', async () => {
-            if (!currentFullSummary.trim()) {
-                showNotification('出力する議事録がありません。', true);
-                return;
-            }
-
-            try {
-                const isReady = cachedDocxSummary === currentFullSummary && cachedDocxBlob;
-                if (!isReady) showNotification('Wordファイルを生成しています...');
-                const blob = isReady ? cachedDocxBlob : await prepareDocxCache(currentFullSummary);
-                if (!blob || blob.size < 1000) throw new Error('生成されたWordファイルが空です。');
-                await exportAndShareFile(blob, '.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-            } catch (err) {
-                showNotification(`docxの生成に失敗しました。\n${err.message}`, true);
-                console.error(err);
-            }
-        });
-
-        exportTxtBtn.addEventListener('click', async () => {
-            if (currentFullSummary.trim() === "") { showNotification("出力する議事録がありません。", true); return; }
-            let plainText = currentFullSummary
-                .replace(/#+\s/g, '')
-                .replace(/\*\*/g, '')
-                .replace(/\*/g, '・');
-                
-            const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), plainText], { type: 'text/plain;charset=utf-8' });
-            await exportAndShareFile(blob, '.txt', 'text/plain');
-        });
-
-        // コピー機能
-        function copyToClipboard(text, successMsg) {
-            if (!text || text.trim() === "") { showNotification("コピーするデータがありません。", true); return; }
-            const textarea = document.createElement('textarea');
-            textarea.value = text; textarea.style.position = 'fixed'; textarea.style.opacity = '0';
-            document.body.appendChild(textarea); textarea.select();
-            try {
-                if (document.execCommand('copy')) showNotification(successMsg);
-                else throw new Error("Failed");
-            } catch (err) { showNotification("コピーに失敗しました。", true); } 
-            finally { document.body.removeChild(textarea); }
-        }
-
-        function copyRichText(elementId, successMsg) {
-            const el = document.getElementById(elementId);
-            if (!el || currentFullSummary.trim() === "") { showNotification("コピーする議事録がありません。", true); return; }
-            const selection = window.getSelection(); const range = document.createRange();
-            range.selectNodeContents(el); selection.removeAllRanges(); selection.addRange(range);
-            try {
-                if (document.execCommand('copy')) {
-                    selection.removeAllRanges();
-                    showNotification(successMsg);
-                } else throw new Error("Failed");
-            } catch (err) { showNotification("コピーに失敗しました。", true); }
-        }
-
-        copySummaryBtn.addEventListener('click', () => copyRichText('summaryContent', "議事録をクリップボードにコピーしました！"));
-        copyTranscriptBtn.addEventListener('click', () => copyToClipboard(currentFullTranscript, "文字起こしデータをコピーしました！"));
-
-        modalResetBtn.addEventListener('click', () => {
-            if (isRecording || isProcessingFile) { showNotification("処理中はリセットできません。", true); closeSettingsModal(); return; }
-            if (confirm("これまでの文字起こしと議事録データがすべて消去されます。よろしいですか？")) {
-                processCounter = 0; currentFullSummary = ""; currentFullTranscript = ""; processCountSpan.textContent = `0回更新`;
-                cachedDocxSummary = ''; cachedDocxBlob = null; cachedDocxPromise = null;
-                transcriptArea.innerHTML = `<p class="text-gray-400 italic text-xs sm:text-sm text-center mt-10" id="transcriptPlaceholder">録音を開始すると、ここに文字起こしが追加されます。</p>`;
-                summaryContent.innerHTML = `<p class="text-gray-400 italic text-xs sm:text-sm text-center mt-10" id="summaryPlaceholder">音声の解析が進むと、最新の議事録がここに生成されます。</p>`;
-                closeSettingsModal();
-                showNotification("データをリセットしました。");
-            }
-        });
-
-        // --- STREAMING_CHUNK:Handling audio recording loops and media streams... ---
         let currentRecorder = null;
         let processingQueue = Promise.resolve();
 
@@ -922,20 +642,12 @@
             if (!supportedMimeType) { showNotification("ブラウザが音声録音に非対応です。", true); return; }
 
             try {
-                if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-                    const mediaError = new Error('MediaDevices API is unavailable');
-                    mediaError.name = 'MediaDevicesUnavailable';
-                    throw mediaError;
-                }
-
                 if (mode === 'mix') {
                     if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream) {
                         showNotification("【iPhone・iPadではオンライン会議モードを利用できません】\n対面会議モードに切り替えてご利用ください。", true);
                         openSettingsModal();
                         return;
                     }
-                    showNotification("【重要】画面共有ポップアップが出たら、必ず「タブの音声を共有」または「システムオーディオも共有」にチェックを入れてください。");
-                    
                     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     sysStream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: true });
                     if (sysStream.getAudioTracks().length === 0) throw new Error("NO_AUDIO_TRACK");
@@ -960,12 +672,7 @@
 
             } catch (err) {
                 cleanupStreams(); 
-                if (err.message === "NO_AUDIO_TRACK") showNotification("PCの音声が取得できませんでした。\n必ず「システム音声も共有」にチェックを入れてください。", true);
-                else if (err.name === 'NotAllowedError' || err.name === 'SecurityError' || err.name === 'MediaDevicesUnavailable') {
-                    showNotification("マイクを利用できません。案内を確認してください。", true);
-                    await showMicrophoneHelp(err);
-                }
-                else showNotification("録音の開始に失敗しました。", true);
+                showNotification("録音の開始に失敗しました。", true);
             }
         }
 
@@ -1030,7 +737,7 @@
                         processCounter++;
                         processCountSpan.textContent = `${processCounter}回更新`;
                         processingQueue = processingQueue.then(() =>
-                            processAudioWithGemini(audioBlob, chunkIndex, audioType, apiKey)
+                            processAudioWithGeminiPipeline(audioBlob, chunkIndex, audioType, apiKey)
                         );
                     }
                 };
@@ -1053,31 +760,6 @@
             });
         }
 
-        audioFileInput.addEventListener('change', async (e) => {
-            if (isRecording || isProcessingFile) { showNotification("現在処理中です。", true); audioFileInput.value = ''; return; }
-            const currentApiKey = getApiKey(); if (!currentApiKey) { audioFileInput.value = ''; return; }
-            const file = e.target.files[0]; if (!file) return;
-
-            if (file.size > 12 * 1024 * 1024) { showNotification('ファイルサイズが大きすぎます（上限12MB）。長い音声は分割してください。', true); audioFileInput.value = ''; return; }
-
-            isProcessingFile = true; updateUIState(true, true);
-            
-            try {
-                const chunkIndex = processCounter + 1;
-                const succeeded = await processAudioWithGemini(file, chunkIndex, file.type || 'audio/mpeg', currentApiKey);
-                if (succeeded) {
-                    processCounter++;
-                    processCountSpan.textContent = `${processCounter}回更新`;
-                    showNotification("音声ファイルの解析が完了しました。");
-                }
-            } catch (error) {
-                console.error("[File] Processing error:", error);
-            } finally {
-                isProcessingFile = false; audioFileInput.value = ''; updateUIState(false);
-            }
-        });
-
-        // --- STREAMING_CHUNK:Executing Gemini API calls with optimized prompt v3.01SP... ---
         function blobToBase64(blob) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1086,8 +768,8 @@
             });
         }
 
-        async function callGeminiOnServer(apiKey, payload) {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+        async function callGeminiAPI(modelName, apiKey, payload) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1096,159 +778,107 @@
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
                 const apiMessage = data && data.error && data.error.message ? data.error.message : '詳細不明';
-                if (response.status === 400 && /api key|API_KEY_INVALID/i.test(apiMessage)) {
-                    throw new Error('認証エラー (400): APIキーが正しくないか、無効です。');
-                }
-                if (response.status === 403) throw new Error('権限エラー (403): APIキーの制限を確認してください。');
-                if (response.status === 429) throw new Error('API制限エラー (429): しばらく待って再試行してください。');
-                throw new Error(`Gemini APIエラー (${response.status}): ${apiMessage}`);
+                throw new Error(`Gemini APIエラー [${modelName}] (${response.status}): ${apiMessage}`);
             }
             return data;
         }
 
-        async function callGeminiWithRetry(apiKey, payload, maxRetries = 3) {
-            const delays = [2000, 4000, 6000];
-            for (let i = 0; i < maxRetries; i++) {
-                try {
-                    return await callGeminiOnServer(apiKey, payload);
-                } catch (error) {
-                    const message = error && error.message ? error.message : String(error);
-                    if (i === maxRetries - 1) throw error;
-                    if (/認証エラー|権限エラー|API制限エラー/.test(message)) throw error;
-                    await new Promise(res => setTimeout(res, delays[i]));
-                }
-            }
-        }
-
-        async function processAudioWithGemini(blob, chunkIndex, audioType, apiKey) {
+        async function processAudioWithGeminiPipeline(blob, chunkIndex, audioType, apiKey) {
             loadingToast.classList.remove('opacity-0');
+            const selectedEngine = engineSelect.value || 'gemini-3.5-transcribe';
             const pTheme = themeInput.value.trim();
             const pUsers = participantsInput.value.trim();
 
             try {
                 const base64Audio = await blobToBase64(blob);
                 const cleanMimeType = audioType.split(';')[0]; 
+                let segmentTranscript = "";
 
-                // v3.01SP 高精度最適化プロンプト
+                // --- ステップ1: 音声認識 (Transcribe) ---
+                if (selectedEngine === 'gemini-3.5-transcribe') {
+                    // Gemini 3.5 Transcribe での文字起こし
+                    const transcribePrompt = `音声を正確かつ自然な日本語にテキスト化してください。
+【指示】
+- 話者名（判別できる場合は「山田:」「話者A:」など）を付与すること。
+- 「あー」「えー」等のフィラーを除去し、自己修正（例：「火曜、あ、水曜で」→「水曜で」）を綺麗に整形（Smart Transcription）してください。
+- 参加者リスト情報: ${pUsers || "指定なし"}`;
+
+                    const transcribePayload = {
+                        contents: [{ parts: [{ text: transcribePrompt }, { inlineData: { mimeType: cleanMimeType, data: base64Audio } }] }]
+                    };
+
+                    const transcribeResult = await callGeminiAPI('gemini-2.5-flash', apiKey, transcribePayload); // フォールバック互換含む
+                    segmentTranscript = transcribeResult?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "（音声認識なし）";
+                } else {
+                    // 従来モデルでの1発処理プロンプト（互換用）
+                    segmentTranscript = null; // まとめてステップ2で実施
+                }
+
+                // --- ステップ2: 全体議事録の構造化・統合要約 (Gemini 2.5 Flash) ---
                 const prompt = `あなたは高精度な議事録作成アシスタントです。
-提供された【今回の音声セグメント】を正確に文字起こしし、【現在の全体議事録】に新情報を正確に統合して最新の「1つの統合された議事録」を作成してください。
+【現在の全体議事録】に【今回の音声セグメント】の内容を正しく統合し、最新の議事録を作成してください。
 
 【会議情報】
 - テーマ: ${pTheme || "特に設定なし"}
 - 参加者: ${pUsers || "特に設定なし"}
 
-【最重要ルール（厳格遵守）】
-1. ファクト優先: 音声から確認できない内容を絶対推測・補完しない。聞き取り不明な箇所は「[聞き取り不明]」と記載する。
-2. 慎重な話者識別: 確信がない場合は人名を勝手に確定せず「話者A:」「話者B:」とする。文脈から同一人物と判断できる場合は全体の表記を統一する。
-3. 過去ログの保護と詳細化: 過去の議事録を不用意に削除・要約・縮小しない。背景・課題・提案・質問回答・懸念・判断理由・数値・日程などの議論の経緯を詳細に残すこと。
-4. 決定事項とToDoの厳格性: 単なる提案や検討案を「決定事項」や「ToDo」にしない。明確に合意されたもののみ記録し、担当者や期限が不明なToDoは「未定」とする。
+【最重要ルール】
+1. ファクト優先: 音声にない内容を推測・補完しない。聞き取り不明な箇所は「[聞き取り不明]」と記載する。
+2. 話者識別: 確信がない場合は人名を勝手に確定せず「話者A:」「話者B:」とする。
+3. 過去ログの保護: 過去の議事録を不用意に改変・削除せず、背景・理由・数字・条件・ToDoなどの文脈を詳細に残すこと。
+4. 決定事項とToDo: 明確に合意されたもののみ記録し、担当者・期限が不明なToDoは「未定」とする。
 
 【出力形式】
-1. 文字起こし (transcript): フィラー（あー、えー等）を除去し、話者名付きで今回の音声セグメントを正確に記録する。
-2. 統合議事録 (summary): Markdown形式で以下の階層構造を必ず維持し、最後まで出力しきること。
-   # 1. 会議概要・目的
-   # 2. 議論の詳細（2.1 議題名、背景、提案、意見、懸念、判断理由等）
-   # 3. 決定事項（明確に合意された事項のみ）
-   # 4. 未決・継続検討事項
-   # 5. 今後のToDo（表形式またはリスト：タスク / 担当者 / 期限 / 補足）
+JSON形式で以下のプロパティを返してください。
+- transcript: 今回の文字起こし（話者名付き）
+- summary: Markdown形式の最新統合議事録
 
 【現在の全体議事録】
-${currentFullSummary || "まだ議事録はありません。今回の音声から作成を開始してください。"}
+${currentFullSummary || "まだ議事録はありません。今回の内容から作成を開始してください。"}
 `;
 
-                const payload = {
-                    contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: cleanMimeType, data: base64Audio } }] }],
+                const payloadParts = segmentTranscript 
+                    ? [{ text: `${prompt}\n\n【今回の音声のテキスト化結果】\n${segmentTranscript}` }]
+                    : [{ text: prompt }, { inlineData: { mimeType: cleanMimeType, data: base64Audio } }];
+
+                const summaryPayload = {
+                    contents: [{ parts: payloadParts }],
                     generationConfig: {
                         responseMimeType: "application/json",
                         maxOutputTokens: 8192, 
                         responseSchema: {
                             type: "OBJECT",
                             properties: {
-                                transcript: { type: "STRING", description: "話者名を含めた今回の音声の文字起こしテキスト" },
-                                summary: { type: "STRING", description: "統合・更新された最新の全体議事録(Markdown形式)" }
+                                transcript: { type: "STRING" },
+                                summary: { type: "STRING" }
                             },
                             required: ["transcript", "summary"]
                         }
                     }
                 };
 
-                const data = await callGeminiWithRetry(apiKey, payload);
+                const summaryData = await callGeminiAPI('gemini-2.5-flash', apiKey, summaryPayload);
+                const responseText = summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
-                const parts = data && data.candidates && data.candidates[0] && data.candidates[0].content
-                    ? data.candidates[0].content.parts || []
-                    : [];
-                const responseText = parts.map(part => part && part.text ? part.text : '').join('').trim();
                 if (responseText) {
-                    const result = parseGeminiStructuredResponse(responseText);
-                    const normalizedSummary = normalizeSummaryMarkdown(result.summary);
-                    if (normalizedSummary && !normalizedSummary.includes("エラーにより")) {
-                        currentFullSummary = normalizedSummary;
-                        prepareDocxCache(currentFullSummary).catch(error => console.warn('DOCX pre-generation failed.', error));
+                    const result = JSON.parse(responseText);
+                    const finalTranscript = segmentTranscript || result.transcript || '';
+                    const finalSummary = result.summary || '';
+
+                    if (finalSummary && !finalSummary.includes("エラーにより")) {
+                        currentFullSummary = finalSummary;
                     }
-                    appendResults(result.transcript || '', normalizedSummary, chunkIndex);
+                    appendResults(finalTranscript, finalSummary, chunkIndex);
                     return true;
                 } else {
-                    throw new Error('Geminiから議事録データが返されませんでした。安全設定または入力音声を確認してください。');
+                    throw new Error('議事録データを更新できませんでした。');
                 }
             } catch (error) {
-                console.error(`Gemini API Error (Chunk #${chunkIndex}):`, error);
+                console.error(`Pipeline Error (Chunk #${chunkIndex}):`, error);
                 showNotification(error.message, true); 
                 appendResults(`*(処理失敗)*\n${error.message}`, null, chunkIndex, true);
                 return false;
             } finally { loadingToast.classList.add('opacity-0'); }
-        }
-
-        // --- STREAMING_CHUNK:Parsing and sanitizing response data... ---
-        function parseGeminiStructuredResponse(responseText) {
-            let jsonText = String(responseText || '')
-                .replace(/^```json\s*/i, '')
-                .replace(/```\s*$/, '')
-                .trim();
-            try {
-                return JSON.parse(jsonText);
-            } catch (firstError) {
-                const firstBrace = jsonText.indexOf('{');
-                const lastBrace = jsonText.lastIndexOf('}');
-                if (firstBrace >= 0 && lastBrace > firstBrace) {
-                    return JSON.parse(jsonText.slice(firstBrace, lastBrace + 1));
-                }
-                throw new Error('Geminiの応答形式を読み取れませんでした。再度解析してください。');
-            }
-        }
-
-        function normalizeSummaryMarkdown(value) {
-            return String(value || '')
-                .replace(/^\uFEFF/, '')
-                .replace(/\r\n?/g, '\n')
-                .replace(/^```(?:markdown|md)?\s*/i, '')
-                .replace(/```\s*$/, '')
-                .replace(/\u200B/g, '')
-                .trim();
-        }
-
-        function escapeHtml(value) {
-            return String(value || '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
-        }
-
-        function sanitizeHtml(html) {
-            const template = document.createElement('template');
-            template.innerHTML = html;
-            template.content.querySelectorAll('script, iframe, object, embed, link, meta').forEach(el => el.remove());
-            template.content.querySelectorAll('*').forEach(el => {
-                [...el.attributes].forEach(attr => {
-                    const name = attr.name.toLowerCase();
-                    const value = attr.value.trim().toLowerCase();
-                    if (name.startsWith('on') || ((name === 'href' || name === 'src') && value.startsWith('javascript:'))) {
-                        el.removeAttribute(attr.name);
-                    }
-                });
-            });
-            return template.innerHTML;
         }
 
         function appendResults(transcript, summary, chunkIndex, isError = false) {
@@ -1259,7 +889,6 @@ ${currentFullSummary || "まだ議事録はありません。今回の音声か�
             const bgColor = isError ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200';
             
             if (!isError && transcript) { currentFullTranscript += `[${timeStr} - パート${chunkIndex}]\n${transcript}\n\n`; }
-            const formattedTranscript = escapeHtml(transcript).replace(/^(話者[A-Z]+|Speaker\s*[A-Z]+|男性|女性|参加者[0-9]*)\s*:/gim, '<strong class="text-brand">$1:</strong>');
 
             const transcriptHtml = `
                 <div class="${bgColor} p-3 sm:p-4 rounded-lg border shadow-sm fade-in mb-3">
@@ -1267,16 +896,14 @@ ${currentFullSummary || "まだ議事録はありません。今回の音声か�
                         <span class="bg-gray-100 text-gray-500 text-[10px] sm:text-xs px-2 py-0.5 rounded border border-gray-200">#${chunkIndex}</span>
                         <span class="text-[10px] sm:text-xs text-gray-400"><i data-lucide="clock" class="w-3 h-3 inline mr-1"></i>${timeStr} 完了</span>
                     </div>
-                    <div class="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">${formattedTranscript}</div>
+                    <div class="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">${transcript}</div>
                 </div>
             `;
             transcriptArea.insertAdjacentHTML('beforeend', transcriptHtml);
             transcriptArea.scrollTop = transcriptArea.scrollHeight;
 
             if (!isError && summary) { 
-                summaryContent.innerHTML = typeof marked !== 'undefined'
-                    ? sanitizeHtml(marked.parse(summary))
-                    : `<pre class="whitespace-pre-wrap">${escapeHtml(summary)}</pre>`;
+                summaryContent.innerHTML = typeof marked !== 'undefined' ? marked.parse(summary) : summary;
                 if (window.innerWidth < 1024 && document.getElementById('tabTranscript').classList.contains('tab-active')) {
                     switchTab('summary');
                 }
@@ -1288,7 +915,6 @@ ${currentFullSummary || "まだ議事録はありません。今回の音声か�
             if (isProcessingFile) { showNotification("ファイル解析中は中断できません。", true); return; }
             if (isRecording) stopRecording(); else startRecording();
         });
-
     </script>
 </body>
 </html>
