@@ -629,6 +629,282 @@
             return completed;
         }
 
+        // --- Word (.docx) 生成処理 ---
+        function markdownInlineToDocxRuns(text, TextRun) {
+            const normalized = String(text || '')
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+                .replace(/~~([^~]+)~~/g, '$1')
+                .replace(/`([^`]+)`/g, '$1');
+
+            return normalized.split(/(\*\*[^*]+\*\*)/g)
+                .filter(Boolean)
+                .map(part => {
+                    const bold = part.startsWith('**') && part.endsWith('**');
+                    return new TextRun({
+                        text: bold ? part.slice(2, -2) : part,
+                        bold: bold
+                    });
+                });
+        }
+
+        async function createStandardDocxBlob(markdown) {
+            if (typeof docx === 'undefined') {
+                throw new Error('DOCX生成ライブラリを読み込めませんでした。通信状態を確認してください。');
+            }
+
+            const {
+                Document: DocxDocument,
+                Packer,
+                Paragraph,
+                TextRun,
+                HeadingLevel,
+                AlignmentType
+            } = docx;
+
+            const paragraphs = [
+                new Paragraph({
+                    text: 'AI議事録',
+                    heading: HeadingLevel.TITLE,
+                    alignment: AlignmentType.CENTER,
+                    spacing: { after: 120 }
+                }),
+                new Paragraph({
+                    children: [new TextRun({ text: `出力日時：${new Date().toLocaleString('ja-JP')}`, color: '666666', size: 18 })],
+                    alignment: AlignmentType.RIGHT,
+                    spacing: { after: 300 }
+                })
+            ];
+
+            let inCodeBlock = false;
+            String(markdown || '').replace(/\r\n/g, '\n').split('\n').forEach(rawLine => {
+                const line = rawLine.replace(/\t/g, '    ');
+                const trimmed = line.trim();
+
+                if (/^```/.test(trimmed)) {
+                    inCodeBlock = !inCodeBlock;
+                    return;
+                }
+                if (!trimmed) {
+                    paragraphs.push(new Paragraph({ text: '', spacing: { after: 40 } }));
+                    return;
+                }
+
+                const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+                if (heading) {
+                    const levels = [
+                        HeadingLevel.HEADING_1,
+                        HeadingLevel.HEADING_2,
+                        HeadingLevel.HEADING_3,
+                        HeadingLevel.HEADING_4,
+                        HeadingLevel.HEADING_5,
+                        HeadingLevel.HEADING_6
+                    ];
+                    paragraphs.push(new Paragraph({
+                        children: markdownInlineToDocxRuns(heading[2], TextRun),
+                        heading: levels[heading[1].length - 1],
+                        keepNext: true,
+                        spacing: { before: 240, after: 120 }
+                    }));
+                    return;
+                }
+
+                if (/^([-*_])\1\1+$/.test(trimmed)) {
+                    paragraphs.push(new Paragraph({ thematicBreak: true }));
+                    return;
+                }
+
+                const bullet = line.match(/^(\s*)[-+*]\s+(.+)$/);
+                if (bullet) {
+                    const level = Math.min(Math.floor(bullet[1].length / 2), 5);
+                    paragraphs.push(new Paragraph({
+                        children: markdownInlineToDocxRuns(bullet[2], TextRun),
+                        bullet: { level },
+                        spacing: { after: 80 }
+                    }));
+                    return;
+                }
+
+                const numbered = line.match(/^(\s*)(\d+)[.)]\s+(.+)$/);
+                if (numbered) {
+                    const level = Math.min(Math.floor(numbered[1].length / 2), 5);
+                    paragraphs.push(new Paragraph({
+                        children: markdownInlineToDocxRuns(`${numbered[2]}. ${numbered[3]}`, TextRun),
+                        indent: { left: 360 * (level + 1), hanging: 240 },
+                        spacing: { after: 80 }
+                    }));
+                    return;
+                }
+
+                const quote = trimmed.match(/^>\s?(.*)$/);
+                if (quote) {
+                    paragraphs.push(new Paragraph({
+                        children: [new TextRun({ text: quote[1], italics: true, color: '555555' })],
+                        indent: { left: 480 },
+                        spacing: { after: 100 }
+                    }));
+                    return;
+                }
+
+                paragraphs.push(new Paragraph({
+                    children: inCodeBlock
+                        ? [new TextRun({ text: trimmed, font: 'Consolas', size: 19 })]
+                        : markdownInlineToDocxRuns(trimmed, TextRun),
+                    spacing: { after: 120, line: 360 }
+                }));
+            });
+
+            const documentFile = new DocxDocument({
+                creator: 'AI議事録ツール',
+                title: 'AI議事録',
+                description: 'Geminiで生成した議事録',
+                styles: {
+                    default: {
+                        document: {
+                            run: { font: 'Yu Gothic', size: 22 },
+                            paragraph: { spacing: { line: 360, after: 120 } }
+                        }
+                    }
+                },
+                sections: [{
+                    properties: {
+                        page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } }
+                    },
+                    children: paragraphs
+                }]
+            });
+
+            return Packer.toBlob(documentFile);
+        }
+
+        function prepareDocxCache(markdown) {
+            const source = String(markdown || '');
+            if (cachedDocxSummary === source && cachedDocxBlob) {
+                return Promise.resolve(cachedDocxBlob);
+            }
+            if (cachedDocxSummary === source && cachedDocxPromise) {
+                return cachedDocxPromise;
+            }
+
+            cachedDocxSummary = source;
+            cachedDocxBlob = null;
+            cachedDocxPromise = createStandardDocxBlob(source)
+                .then(blob => {
+                    if (cachedDocxSummary === source) cachedDocxBlob = blob;
+                    return blob;
+                })
+                .catch(error => {
+                    if (cachedDocxSummary === source) {
+                        cachedDocxSummary = '';
+                        cachedDocxBlob = null;
+                        cachedDocxPromise = null;
+                    }
+                    throw error;
+                });
+            return cachedDocxPromise;
+        }
+
+        exportDocxBtn.addEventListener('click', async () => {
+            if (!currentFullSummary.trim()) {
+                showNotification('出力する議事録がありません。', true);
+                return;
+            }
+
+            try {
+                const isReady = cachedDocxSummary === currentFullSummary && cachedDocxBlob;
+                if (!isReady) showNotification('Wordファイルを生成しています...');
+                const blob = isReady ? cachedDocxBlob : await prepareDocxCache(currentFullSummary);
+                if (!blob || blob.size < 1000) throw new Error('生成されたWordファイルが空です。');
+                await exportAndShareFile(blob, '.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            } catch (err) {
+                showNotification(`docxの生成に失敗しました。\n${err.message}`, true);
+                console.error(err);
+            }
+        });
+
+        // --- テキスト (.txt) 生成と出力 ---
+        exportTxtBtn.addEventListener('click', async () => {
+            if (currentFullSummary.trim() === "") {
+                showNotification("出力する議事録がありません。", true);
+                return;
+            }
+
+            let plainText = currentFullSummary
+                .replace(/#+\s/g, '')
+                .replace(/\*\*/g, '')
+                .replace(/\*/g, '・');
+
+            const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), plainText], { type: 'text/plain;charset=utf-8' });
+            await exportAndShareFile(blob, '.txt', 'text/plain');
+        });
+
+        // --- コピー機能の実装 ---
+        function executeCopy(text, successMsg) {
+            if (!text || text.trim() === "") {
+                showNotification("コピーするデータがありません。", true);
+                return;
+            }
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showNotification(successMsg);
+                }).catch(() => {
+                    fallbackCopy(text, successMsg);
+                });
+            } else {
+                fallbackCopy(text, successMsg);
+            }
+        }
+
+        function fallbackCopy(text, successMsg) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                if (document.execCommand('copy')) {
+                    showNotification(successMsg);
+                } else {
+                    throw new Error("execCommand failed");
+                }
+            } catch (err) {
+                showNotification("クリップボードへのコピーに失敗しました。", true);
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        }
+
+        copyTranscriptBtn.addEventListener('click', () => {
+            executeCopy(currentFullTranscript, "文字起こし履歴をコピーしました！");
+        });
+
+        copySummaryBtn.addEventListener('click', () => {
+            const el = document.getElementById('summaryContent');
+            if (!el || !currentFullSummary.trim()) {
+                showNotification("コピーする議事録がありません。", true);
+                return;
+            }
+
+            // リッチテキストとしての選択コピーを試みる
+            try {
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                if (document.execCommand('copy')) {
+                    selection.removeAllRanges();
+                    showNotification("議事録をクリップボードにコピーしました！");
+                } else {
+                    selection.removeAllRanges();
+                    executeCopy(currentFullSummary, "議事録（テキスト）をコピーしました！");
+                }
+            } catch (err) {
+                executeCopy(currentFullSummary, "議事録をコピーしました！");
+            }
+        });
+
         let currentRecorder = null;
         let processingQueue = Promise.resolve();
 
