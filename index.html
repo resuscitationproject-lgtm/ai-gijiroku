@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-title" content="AI議事録">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     
-    <title>北九州AIクラブ 音声解析リアルタイム議事録 (v3.03SP)</title>
+    <title>北九州AIクラブ 音声解析リアルタイム議事録 (v4.00SP)</title>
     
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>
@@ -90,7 +90,7 @@
                 <i data-lucide="mic-2" class="w-5 h-5"></i>
             </div>
             <div>
-                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール <span class="text-xs font-normal text-gray-500">v3.03SP (Gemini 3.6 Flash対応)</span></h1>
+                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール <span class="text-xs font-normal text-gray-500">v4.00SP (Gemini 4 Argon搭載)</span></h1>
             </div>
         </div>
         
@@ -155,6 +155,12 @@
                 </h2>
                 <div class="flex items-center gap-2 w-full lg:w-auto justify-between lg:justify-end">
                     <span id="processCount" class="text-[10px] sm:text-xs font-medium text-brand bg-brand/10 px-2 py-1 rounded">0回更新</span>
+                    
+                    <!-- 追加: Argon最終まとめボタン -->
+                    <button id="argonSummaryBtn" class="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-2 sm:px-3 py-1 sm:py-1.5 rounded hover:opacity-90 shadow-sm transition-opacity" title="Gemini 4 Argonで高精度な最終まとめを生成">
+                        <i data-lucide="sparkles" class="w-3 h-3"></i> <span class="hidden sm:inline">Argon 最終まとめ</span><span class="sm:hidden">Argon</span>
+                    </button>
+
                     <div class="flex gap-1.5 relative">
                         <div class="relative inline-block text-left">
                             <button id="exportDropdownBtn" class="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-white border border-brand/30 text-brand px-2 sm:px-3 py-1 sm:py-1.5 rounded hover:bg-brand hover:text-white shadow-sm transition-colors">
@@ -278,7 +284,7 @@
     <div id="toastContainer" class="fixed top-safe mt-4 left-1/2 transform -translate-x-1/2 z-[60] w-full max-w-sm px-4 pointer-events-none flex flex-col gap-2"></div>
 
     <footer class="bg-white border-t border-gray-200 py-3 text-center shrink-0">
-        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：北九州AIクラブ／光井企画工学事務所　バージョン 3.03SP (Gemini 3.6 Flash搭載)</p>
+        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：北九州AIクラブ／光井企画工学事務所　バージョン 4.00SP (Gemini 4 Argon搭載)</p>
     </footer>
 
     <script>
@@ -342,6 +348,7 @@
         
         const exportDropdownBtn = document.getElementById('exportDropdownBtn');
         const exportMenu = document.getElementById('exportMenu');
+        const argonSummaryBtn = document.getElementById('argonSummaryBtn');
         const exportDocxBtn = document.getElementById('exportDocxBtn'); 
         const exportTxtBtn = document.getElementById('exportTxtBtn');
         const copySummaryBtn = document.getElementById('copySummaryBtn');
@@ -350,6 +357,87 @@
         const micHelpMessage = document.getElementById('micHelpMessage');
         const closeMicHelpBtn = document.getElementById('closeMicHelpBtn');
         const closeMicHelpMainBtn = document.getElementById('closeMicHelpMainBtn');
+
+        // --- Argon 最終まとめ処理 ---
+        argonSummaryBtn.addEventListener('click', async () => {
+            if (!currentFullTranscript.trim()) {
+                showNotification("文字起こしデータがありません。先に録音・解析を行ってください。", true);
+                return;
+            }
+            if (isRecording) {
+                showNotification("録音中は最終まとめを実行できません。先に停止ボタンを押してください。", true);
+                return;
+            }
+
+            const currentApiKey = getApiKey();
+            if (!currentApiKey) return;
+
+            if (!confirm("Gemini 4 Argonを使用して、これまでの全発言から最終版の議事録を生成しますか？\n\n※Argonは非常に高精度ですが、深く思考するため処理に15秒〜30秒ほどかかります。またAPIコストがFlashモデルより高めです。")) {
+                return;
+            }
+
+            // UIをローディング状態に
+            loadingToast.querySelector('span').textContent = "Argonが深く思考中... (約15〜30秒)";
+            loadingToast.classList.remove('opacity-0');
+            argonSummaryBtn.disabled = true;
+            argonSummaryBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            const pTheme = themeInput.value.trim();
+            const pUsers = participantsInput.value.trim();
+            
+            const prompt = `あなたは「Gemini 4 Argon」として稼働する、最高精度の議事録作成・分析AIです。
+以下の【全文字起こしデータ】を深く分析し、会議の最終版となる完璧な議事録を作成してください。
+
+【会議情報】
+- テーマ: ${pTheme || "特に設定なし"}
+- 参加者: ${pUsers || "特に設定なし"}
+
+【要求事項（Argonの深い思考力を用いてください）】
+1. 情報の抜け漏れ防止: 議論の中で決まったこと（決定事項）、やるべきこと（ToDo）、その担当者、期限を絶対に漏らさず抽出すること。
+2. 推測の排除: 担当者や期限が不明確な場合は「未定」と明記し、勝手に推測しないこと。
+3. 構造化: Markdown形式で、会議概要、議題別の詳細、決定事項、未決事項、ToDoリストを美しく整理すること。
+4. 最終版としての完成度: これまでの断片的な要約ではなく、全体を通して矛盾のない、そのまま上司やクライアントに提出できるレベルの文書に仕上げること。
+
+【全文字起こしデータ】
+${currentFullTranscript}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    // 事実に基づくためtemperatureを低めに設定
+                    temperature: 0.2,
+                    maxOutputTokens: 8192
+                }
+            };
+
+            try {
+                // Argonモデル (gemini-4-argon) 呼び出し
+                const data = await callGeminiAPI('gemini-4-argon', currentApiKey, payload);
+                const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+                if (responseText) {
+                    currentFullSummary = responseText;
+                    summaryContent.innerHTML = typeof marked !== 'undefined' ? marked.parse(currentFullSummary) : currentFullSummary;
+                    showNotification("Argonによる高精度な最終まとめが完了しました！");
+                    
+                    // スマホ幅の場合は議事録タブに切り替え
+                    if (window.innerWidth < 1024 && document.getElementById('tabTranscript').classList.contains('tab-active')) {
+                        switchTab('summary');
+                    }
+                } else {
+                    throw new Error('Argonからの応答が空でした。');
+                }
+            } catch (error) {
+                console.error("Argon Error:", error);
+                showNotification(`Argonの処理に失敗しました。\n${error.message}`, true);
+            } finally {
+                loadingToast.classList.add('opacity-0');
+                loadingToast.querySelector('span').textContent = "議事録を更新中...";
+                argonSummaryBtn.disabled = false;
+                argonSummaryBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }
+        });
 
         if (typeof lucide !== 'undefined') {
             lucide.createIcons();
