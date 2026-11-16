@@ -1,1284 +1,1186 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="AI議事録">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png">
-    
-    <title>北九州AIクラブ 音声解析リアルタイム議事録 (v4.00SP)</title>
-    
-    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        brand: { DEFAULT: '#1432AA', light: '#F0F4FF', dark: '#0A1D6B' }
-                    },
-                    typography: (theme) => ({
-                        DEFAULT: {
-                            css: {
-                                h1: { color: theme('colors.brand.dark'), borderBottom: '2px solid', borderColor: theme('colors.brand.light'), paddingBottom: '0.5rem', fontSize: '24px', lineHeight: '1.3' },
-                                h2: { color: theme('colors.brand.dark'), borderBottom: '2px solid', borderColor: theme('colors.gray.200'), paddingBottom: '0.5rem', marginTop: '1.5rem', fontSize: '18px', lineHeight: '1.4' },
-                                h3: { color: theme('colors.brand.DEFAULT'), marginTop: '1.2rem', fontSize: '16px', lineHeight: '1.5' },
-                                strong: { color: theme('colors.gray.900'), backgroundColor: theme('colors.brand.light'), padding: '0.1rem 0.3rem', borderRadius: '0.25rem' },
-                                'ul > li::marker': { color: theme('colors.brand.DEFAULT') },
-                                'ol > li::marker': { color: theme('colors.brand.DEFAULT'), fontWeight: 'bold' },
-                                p: { fontSize: '14px' }, li: { fontSize: '14px' }
-                            }
-                        }
-                    })
-                }
-            }
-        }
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.iife.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
-    
-    <style>
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        body { -webkit-tap-highlight-color: transparent; }
-        .recording-pulse { animation: pulse 2s infinite; }
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
-        .fade-in { animation: fadeIn 0.5s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .tab-active { border-bottom: 2px solid #1432AA; color: #1432AA; font-weight: bold; }
-        .tab-inactive { color: #6B7280; }
-        @media (max-width: 1023px) { .mobile-hidden { display: none !important; } }
-        
-        .dropdown-content {
-            display: none;
-            position: absolute;
-            right: 0;
-            background-color: white;
-            min-width: 160px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            z-index: 50;
-            border-radius: 0.5rem;
-            border: 1px solid #e5e7eb;
-            overflow: hidden;
-        }
-        .dropdown-content.show {
-            display: block;
-            animation: fadeIn 0.2s ease-in;
-        }
-        #summaryContent { overflow-wrap: anywhere; word-break: normal; }
-        #summaryContent table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; margin-bottom: 1rem; border-collapse: collapse; }
-        #summaryContent th, #summaryContent td { border: 1px solid #cbd5e1; padding: 6px 12px; }
-        #summaryContent th { background-color: #f1f5f9; }
-        #summaryContent pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
-        #summaryContent img { max-width: 100%; height: auto; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="AI議事録">
+  <title>AI議事録ツール</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.iife.js"></script>
+  <style>
+    body { -webkit-tap-highlight-color: transparent; }
+    .recording-pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgb(239 68 68 / .65); } 70% { box-shadow: 0 0 0 12px rgb(239 68 68 / 0); } 100% { box-shadow: 0 0 0 0 rgb(239 68 68 / 0); } }
+    #summaryContent { overflow-wrap:anywhere; }
+    #summaryContent table { display:block; overflow-x:auto; max-width:100%; border-collapse:collapse; }
+    #summaryContent th, #summaryContent td { border:1px solid #cbd5e1; padding:6px 10px; }
+    #summaryContent th { background:#eff6ff; }
+    .toast { animation: slidein .2s ease-out; }
+    @keyframes slidein { from { transform:translateY(-12px); opacity:0; } to { transform:translateY(0); opacity:1; } }
+  </style>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans min-h-screen flex flex-col pt-safe">
+<body class="min-h-screen bg-slate-50 text-slate-800">
+  <header class="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
+    <div class="flex items-center gap-2">
+      <span class="rounded-lg bg-blue-800 p-2 text-white"><i data-lucide="mic-2" class="h-5 w-5"></i></span>
+      <div><h1 class="font-bold leading-tight">AI議事録ツール</h1><p class="text-xs text-slate-500">v5.1 · Gemini 4 Argon / Carbon</p></div>
+    </div>
+    <div class="flex items-center gap-2">
+      <label id="uploadLabel" title="音声ファイルを解析" class="cursor-pointer rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-700 hover:bg-slate-200"><i data-lucide="upload" class="h-5 w-5"></i><input id="audioFileInput" class="hidden" type="file" accept="audio/*"></label>
+      <button id="settingsBtn" title="設定" class="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-700 hover:bg-slate-200"><i data-lucide="settings" class="h-5 w-5"></i></button>
+      <button id="recordBtn" class="flex items-center gap-1 rounded-lg bg-blue-800 px-4 py-2 font-bold text-white shadow-sm hover:bg-blue-900"><i id="recordIcon" data-lucide="play" class="h-4 w-4"></i><span id="recordText">開始</span></button>
+    </div>
+  </header>
 
-    <header class="bg-white shadow-sm border-b border-gray-200 py-3 px-4 flex justify-between items-center sticky top-0 z-20">
+  <div id="progressWrap" class="hidden h-1 bg-slate-200"><div id="progressBar" class="h-1 bg-blue-700 transition-all" style="width:0%"></div></div>
+
+  <main class="mx-auto grid max-w-screen-2xl gap-4 p-3 lg:grid-cols-2 lg:p-6">
+    <section class="flex min-h-[48vh] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <h2 class="flex items-center gap-2 font-bold"><i data-lucide="users" class="h-4 w-4"></i>文字起こし</h2>
+        <div class="flex items-center gap-2"><span id="status" class="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">待機中</span><button id="copyTranscriptBtn" class="rounded border px-2 py-1 text-xs hover:bg-slate-50">コピー</button></div>
+      </div>
+      <div id="transcriptArea" class="flex-1 space-y-3 overflow-y-auto bg-slate-50/60 p-4"><p id="transcriptPlaceholder" class="mt-12 text-center text-sm italic text-slate-400">録音または音声ファイルの解析を開始すると、ここに文字起こしが追加されます。</p></div>
+    </section>
+
+    <section class="flex min-h-[48vh] flex-col overflow-hidden rounded-xl border border-blue-200 bg-white shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50 px-4 py-3">
+        <h2 class="flex items-center gap-2 font-bold text-blue-950"><i data-lucide="file-text" class="h-4 w-4"></i>最新の全体議事録</h2>
         <div class="flex items-center gap-2">
-            <div class="bg-brand text-white p-1.5 rounded-lg shadow-sm">
-                <i data-lucide="mic-2" class="w-5 h-5"></i>
-            </div>
-            <div>
-                <h1 class="text-base sm:text-lg font-bold text-gray-900 leading-tight">AI議事録ツール <span class="text-xs font-normal text-gray-500">v4.00SP (Gemini 4 Argon搭載)</span></h1>
-            </div>
+          <span id="processCount" class="text-xs text-blue-700">0回更新</span>
+          <button id="finalSummaryBtn" class="rounded bg-indigo-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-800"><i data-lucide="sparkles" class="mr-1 inline h-3 w-3"></i>最終まとめ</button>
+          <button id="exportDocxBtn" class="rounded border border-blue-300 bg-white px-3 py-1.5 text-xs font-bold text-blue-800 hover:bg-blue-800 hover:text-white">Word</button>
+          <button id="exportTxtBtn" class="rounded border border-blue-300 bg-white px-3 py-1.5 text-xs font-bold text-blue-800 hover:bg-blue-800 hover:text-white">テキスト</button>
+          <button id="copySummaryBtn" class="rounded border border-blue-300 bg-white px-3 py-1.5 text-xs font-bold text-blue-800 hover:bg-blue-800 hover:text-white">コピー</button>
         </div>
-        
-        <div class="flex items-center gap-2">
-            <button id="forceProcessBtn" title="今すぐ解析" class="hidden items-center justify-center bg-yellow-100 text-yellow-700 p-2 rounded-lg hover:bg-yellow-200 transition-colors border border-yellow-300 shadow-sm">
-                <i data-lucide="zap" class="w-5 h-5"></i>
-            </button>
-            <label id="uploadLabelWrapper" class="cursor-pointer flex items-center justify-center bg-gray-100 text-gray-700 p-2 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200 shadow-sm">
-                <i data-lucide="upload" class="w-5 h-5"></i>
-                <input type="file" id="audioFileInput" accept="audio/*" class="hidden">
-            </label>
-            <button id="settingsBtn" title="設定" class="flex items-center justify-center bg-gray-100 text-gray-700 p-2 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200 shadow-sm">
-                <i data-lucide="settings" class="w-5 h-5"></i>
-            </button>
-            <button id="recordBtn" class="flex items-center gap-1.5 bg-brand text-white px-3 sm:px-4 py-2 rounded-lg font-bold shadow-sm transition-colors">
-                <i data-lucide="play" class="w-4 h-4" id="recordIcon"></i>
-                <span id="recordText">開始</span>
-            </button>
-        </div>
-    </header>
+      </div>
+      <article id="summaryContent" class="prose max-w-none flex-1 overflow-y-auto p-5"><p id="summaryPlaceholder" class="mt-12 text-center text-sm italic text-slate-400">解析が進むと、最新の議事録がここに生成されます。</p></article>
+    </section>
+  </main>
 
-    <div id="progressContainer" class="w-full bg-gray-200 h-1 hidden">
-        <div id="progressBar" class="bg-brand h-1 transition-all duration-1000 ease-linear" style="width: 0%"></div>
+  <div id="settingsModal" class="fixed inset-0 z-40 hidden items-center justify-center bg-slate-950/50 p-4">
+    <div class="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white shadow-2xl">
+      <div class="flex items-center justify-between border-b p-4"><h2 class="font-bold">設定</h2><button id="closeSettingsBtn" class="rounded p-1 hover:bg-slate-100"><i data-lucide="x"></i></button></div>
+      <div class="space-y-4 p-5">
+        <div><label class="mb-1 block text-sm font-bold">Gemini API キー</label><input id="apiKeyInput" type="password" placeholder="AIzaSy..." class="w-full rounded-lg border p-2.5 text-sm"><p class="mt-1 text-xs text-slate-500">キーはこのブラウザ内にのみ保存します。</p></div>
+        <div><label class="mb-1 block text-sm font-bold">音声認識エンジン</label><select id="engineSelect" class="w-full rounded-lg border bg-white p-2 text-sm"><option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe（専門文字起こし・話者分離対応）</option><option value="gemini-4-argon">Gemini 4 Argon（最新・音声から直接議事録化）</option></select></div>
+        <div><label class="mb-1 block text-sm font-bold">会議のテーマ・目的</label><input id="themeInput" class="w-full rounded-lg border p-2 text-sm" placeholder="例: 新アプリ開発のキックオフ"></div>
+        <div><label class="mb-1 block text-sm font-bold">参加者名（カンマ区切り）</label><input id="participantsInput" class="w-full rounded-lg border p-2 text-sm" placeholder="例: 山田, 佐藤, 鈴木"></div>
+        <div class="grid grid-cols-2 gap-3"><div><label class="mb-1 block text-sm font-bold">録音モード</label><select id="modeSelect" class="w-full rounded-lg border p-2 text-sm"><option value="mic">対面会議（マイク）</option><option value="mix">オンライン会議</option></select></div><div><label class="mb-1 block text-sm font-bold">解析周期</label><select id="intervalSelect" class="w-full rounded-lg border p-2 text-sm"><option value="60">1分</option><option value="300" selected>5分</option><option value="600">10分</option></select></div></div>
+        <button id="resetBtn" class="w-full rounded-lg border border-red-200 bg-red-50 py-2 text-sm font-bold text-red-700 hover:bg-red-100">議事録データをリセット</button>
+      </div>
     </div>
+  </div>
+  <div id="toastContainer" class="pointer-events-none fixed left-1/2 top-4 z-50 flex w-full max-w-md -translate-x-1/2 flex-col gap-2 px-4"></div>
 
-    <div class="flex lg:hidden bg-white border-b border-gray-200 sticky z-10" style="top: 60px;">
-        <button id="tabTranscript" class="flex-1 py-3 text-sm tab-active flex items-center justify-center gap-2">
-            <i data-lucide="users" class="w-4 h-4"></i> 文字起こし
-        </button>
-        <button id="tabSummary" class="flex-1 py-3 text-sm tab-inactive flex items-center justify-center gap-2">
-            <i data-lucide="file-text" class="w-4 h-4"></i> 議事録
-        </button>
-    </div>
+  <script>
+  (() => {
+    'use strict';
 
-    <main class="flex-1 w-full mx-auto p-2 sm:p-4 lg:p-6 flex flex-col lg:flex-row gap-4 lg:gap-6 h-[calc(100vh-140px)] max-w-screen-2xl">
-        
-        <!-- 左側：文字起こし履歴 -->
-        <div id="panelTranscript" class="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden h-full">
-            <div class="bg-white px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-200 flex justify-between items-center">
-                <h2 class="font-semibold text-gray-700 flex items-center gap-2 text-sm sm:text-base hidden lg:flex">
-                    <i data-lucide="users" class="w-4 h-4 text-gray-500"></i> 文字起こし (履歴)
-                </h2>
-                <div class="flex items-center gap-2 w-full lg:w-auto justify-between lg:justify-end">
-                    <span id="statusIndicator" class="text-[10px] sm:text-xs font-medium bg-gray-100 text-gray-600 px-2 py-1 rounded-full whitespace-nowrap">待機中</span>
-                    <button id="copyTranscriptBtn" class="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-white border border-gray-300 text-gray-600 px-2 sm:px-3 py-1 sm:py-1.5 rounded hover:bg-gray-100 shadow-sm">
-                        <i data-lucide="copy" class="w-3 h-3"></i> コピー
-                    </button>
-                </div>
-            </div>
-            <div id="transcriptArea" class="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 sm:space-y-4 bg-gray-50/50">
-                <p class="text-gray-400 italic text-xs sm:text-sm text-center mt-10" id="transcriptPlaceholder">
-                    録音を開始すると、ここに文字起こしが追加されます。
-                </p>
-            </div>
+    const MODELS = Object.freeze({
+      TRANSCRIBE: 'gemini-3.5-transcribe',
+      ARGON: 'gemini-4-argon',
+      FINAL_SUMMARY: 'gemini-4-carbon'
+    });
+
+    const STORAGE = Object.freeze({
+      key: 'gemini_api_key_kitakyushu',
+      engine: 'transcribe_engine',
+      theme: 'meeting_theme',
+      participants: 'meeting_participants'
+    });
+
+    let isRecording = false;
+    let isProcessingFile = false;
+    let stream = null;
+    let micStream = null;
+    let sysStream = null;
+    let audioCtx = null;
+    let currentRecorder = null;
+    let chunkTimer = null;
+    let progressTimer = null;
+    let startTime = 0;
+    let currentIntervalSeconds = 300;
+    let processCounter = 0;
+    let supportedMimeType = '';
+    let currentFullTranscript = '';
+    let currentFullSummary = '';
+    let processingQueue = Promise.resolve();
+    let cachedDocxSource = '';
+    let cachedDocxBlob = null;
+    let cachedDocxPromise = null;
+
+    const $ = id => document.getElementById(id);
+
+    const el = {
+      recordBtn: $('recordBtn'),
+      recordIcon: $('recordIcon'),
+      recordText: $('recordText'),
+      uploadLabel: $('uploadLabel'),
+      audioInput: $('audioFileInput'),
+      status: $('status'),
+      transcript: $('transcriptArea'),
+      transcriptPlaceholder: $('transcriptPlaceholder'),
+      summary: $('summaryContent'),
+      progressWrap: $('progressWrap'),
+      progress: $('progressBar'),
+      count: $('processCount'),
+      settings: $('settingsModal'),
+      apiKey: $('apiKeyInput'),
+      engine: $('engineSelect'),
+      theme: $('themeInput'),
+      participants: $('participantsInput'),
+      mode: $('modeSelect'),
+      interval: $('intervalSelect')
+    };
+
+    if (typeof marked !== 'undefined') {
+      marked.setOptions({ gfm: true, breaks: true });
+    }
+
+    if (typeof lucide !== 'undefined') {
+      lucide.createIcons();
+    }
+
+    function notify(message, error = false) {
+      const toast = document.createElement('div');
+      toast.className = `toast rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${
+        error
+          ? 'border-l-4 border-red-500 bg-white text-slate-800'
+          : 'bg-blue-800 text-white'
+      }`;
+      toast.textContent = message;
+      $('toastContainer').append(toast);
+      setTimeout(() => toast.remove(), error ? 9000 : 4000);
+    }
+
+    function escapeHtml(value) {
+      const d = document.createElement('div');
+      d.textContent = String(value ?? '');
+      return d.innerHTML;
+    }
+
+    function getApiKey() {
+      const key = el.apiKey.value.trim();
+
+      if (!key) {
+        notify('設定から Gemini API キーを入力してください。', true);
+        openSettings();
+        return null;
+      }
+
+      return key;
+    }
+
+    function loadSettings() {
+      const savedEngine = localStorage.getItem(STORAGE.engine);
+
+      el.apiKey.value = localStorage.getItem(STORAGE.key) || '';
+      el.engine.value =
+        savedEngine === MODELS.ARGON || savedEngine === MODELS.TRANSCRIBE
+          ? savedEngine
+          : (savedEngine === 'gemini-3.8-flash' ? MODELS.ARGON : MODELS.TRANSCRIBE);
+      el.theme.value = localStorage.getItem(STORAGE.theme) || '';
+      el.participants.value = localStorage.getItem(STORAGE.participants) || '';
+    }
+
+    function saveSetting(key, value) {
+      localStorage.setItem(key, value);
+    }
+
+    loadSettings();
+
+    el.apiKey.addEventListener('input', e => saveSetting(STORAGE.key, e.target.value.trim()));
+    el.engine.addEventListener('change', e => saveSetting(STORAGE.engine, e.target.value));
+    el.theme.addEventListener('input', e => saveSetting(STORAGE.theme, e.target.value.trim()));
+    el.participants.addEventListener('input', e => saveSetting(STORAGE.participants, e.target.value.trim()));
+
+    function openSettings() {
+      el.settings.classList.remove('hidden');
+      el.settings.classList.add('flex');
+    }
+
+    function closeSettings() {
+      el.settings.classList.add('hidden');
+      el.settings.classList.remove('flex');
+    }
+
+    $('settingsBtn').addEventListener('click', openSettings);
+    $('closeSettingsBtn').addEventListener('click', closeSettings);
+
+    el.settings.addEventListener('click', e => {
+      if (e.target === el.settings) closeSettings();
+    });
+
+    function updateUi(active, file = false) {
+      el.recordIcon.setAttribute('data-lucide', active && !file ? 'square' : 'play');
+      el.recordText.textContent = active && !file ? '停止' : '開始';
+
+      el.recordBtn.classList.toggle('bg-red-500', active && !file);
+      el.recordBtn.classList.toggle('bg-blue-800', !(active && !file));
+      el.recordBtn.classList.toggle('recording-pulse', active && !file);
+
+      el.recordBtn.disabled = file;
+      el.uploadLabel.classList.toggle('pointer-events-none', active);
+      el.uploadLabel.classList.toggle('opacity-50', active);
+
+      el.status.textContent = active ? (file ? 'ファイルを解析中' : '録音中') : '待機中';
+      el.status.className = `rounded-full px-2 py-1 text-xs ${
+        active
+          ? (file ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-700')
+          : 'bg-slate-100 text-slate-600'
+      }`;
+
+      el.progressWrap.classList.toggle('hidden', !active);
+
+      if (!active) {
+        el.progress.style.width = '0%';
+      }
+
+      if (active && el.transcriptPlaceholder) {
+        el.transcriptPlaceholder.remove();
+      }
+
+      if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+      }
+    }
+
+    function getSupportedMimeType() {
+      return ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
+        .find(type => MediaRecorder.isTypeSupported(type)) || '';
+    }
+
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => resolve(String(reader.result).split(',')[1]);
+        reader.onerror = reject;
+
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    function textFromResponse(data) {
+      return data?.candidates?.[0]?.content?.parts
+        ?.map(p => p.text || '')
+        .join('')
+        .trim() || '';
+    }
+
+    async function callGemini(model, apiKey, payload) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          `Gemini API エラー（${response.status}）: ${data?.error?.message || '詳細不明'}`
+        );
+      }
+
+      return data;
+    }
+
+    function meetingInfo() {
+      return `テーマ: ${el.theme.value.trim() || '指定なし'}
+参加者: ${el.participants.value.trim() || '指定なし'}`;
+    }
+
+    function invalidateDocxCache() {
+      cachedDocxSource = '';
+      cachedDocxBlob = null;
+      cachedDocxPromise = null;
+    }
+
+    function setSummary(markdown) {
+      currentFullSummary = String(markdown || '').trim();
+      invalidateDocxCache();
+
+      el.summary.innerHTML = currentFullSummary
+        ? (typeof marked !== 'undefined'
+            ? marked.parse(currentFullSummary)
+            : escapeHtml(currentFullSummary).replace(/\n/g, '<br>'))
+        : '<p class="text-slate-400">議事録はまだありません。</p>';
+    }
+
+    function appendTranscript(text, index, isError = false) {
+      const time = new Date().toLocaleTimeString('ja-JP', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      if (!isError && text) {
+        currentFullTranscript += `[${time} - パート${index}]\n${text}\n\n`;
+      }
+
+      const card = document.createElement('div');
+      card.className = `rounded-lg border p-3 shadow-sm ${
+        isError ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'
+      }`;
+
+      card.innerHTML = `
+        <div class="mb-2 border-b border-slate-100 pb-2 text-xs text-slate-400">
+          #${index} · ${time} 完了
         </div>
-
-        <!-- 右側：全体議事録 -->
-        <div id="panelSummary" class="flex-1 bg-white rounded-xl shadow-sm border border-brand/20 flex flex-col overflow-hidden h-full mobile-hidden">
-            <div class="bg-brand-light px-3 sm:px-4 py-2 sm:py-3 border-b border-brand/20 flex justify-between items-center relative">
-                <h2 class="font-semibold text-brand-dark flex items-center gap-2 text-sm sm:text-base hidden lg:flex">
-                    <i data-lucide="file-text" class="w-4 h-4 text-brand"></i> 最新の全体議事録
-                </h2>
-                <div class="flex items-center gap-2 w-full lg:w-auto justify-between lg:justify-end">
-                    <span id="processCount" class="text-[10px] sm:text-xs font-medium text-brand bg-brand/10 px-2 py-1 rounded">0回更新</span>
-                    
-                    <!-- 追加: Argon最終まとめボタン -->
-                    <button id="argonSummaryBtn" class="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-2 sm:px-3 py-1 sm:py-1.5 rounded hover:opacity-90 shadow-sm transition-opacity" title="Gemini 4 Argonで高精度な最終まとめを生成">
-                        <i data-lucide="sparkles" class="w-3 h-3"></i> <span class="hidden sm:inline">Argon 最終まとめ</span><span class="sm:hidden">Argon</span>
-                    </button>
-
-                    <div class="flex gap-1.5 relative">
-                        <div class="relative inline-block text-left">
-                            <button id="exportDropdownBtn" class="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-white border border-brand/30 text-brand px-2 sm:px-3 py-1 sm:py-1.5 rounded hover:bg-brand hover:text-white shadow-sm transition-colors">
-                                <i data-lucide="share" class="w-3 h-3"></i> <span class="hidden sm:inline">ドキュメント出力</span><span class="sm:hidden">出力・共有</span>
-                            </button>
-                            <div id="exportMenu" class="dropdown-content mt-1">
-                                <button id="exportDocxBtn" class="w-full text-left px-4 py-3 sm:py-2 text-xs sm:text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2 border-b border-gray-100">
-                                    <i data-lucide="file-text" class="w-4 h-4 text-blue-600"></i> Word (.docx) 形式
-                                </button>
-                                <button id="exportTxtBtn" class="w-full text-left px-4 py-3 sm:py-2 text-xs sm:text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                                    <i data-lucide="file-text" class="w-4 h-4 text-gray-600"></i> テキスト (.txt) 形式
-                                </button>
-                            </div>
-                        </div>
-
-                        <button id="copySummaryBtn" class="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-white border border-brand/30 text-brand px-2 sm:px-3 py-1 sm:py-1.5 rounded hover:bg-brand hover:text-white shadow-sm transition-colors">
-                            <i data-lucide="copy" class="w-3 h-3"></i> コピー
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div id="summaryArea" class="flex-1 p-3 sm:p-5 overflow-y-auto bg-white">
-                <div id="summaryContent" class="prose max-w-none text-gray-800">
-                    <p class="text-gray-400 italic text-xs sm:text-sm text-center mt-10" id="summaryPlaceholder">
-                        音声の解析が進むと、最新の議事録がここに生成されます。
-                    </p>
-                </div>
-            </div>
-            
-            <div id="loadingToast" class="absolute bottom-4 right-4 bg-gray-900 text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 transition-opacity opacity-0 pointer-events-none z-10 text-sm">
-                <i data-lucide="loader-2" class="w-4 h-4 animate-spin text-brand-light"></i>
-                <span>議事録を更新中...</span>
-            </div>
+        <div class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+          ${escapeHtml(text)}
         </div>
-    </main>
-
-    <!-- 設定モーダル -->
-    <div id="settingsModal" class="fixed inset-0 bg-gray-900/50 hidden flex items-center justify-center z-50 p-4 transition-opacity opacity-0 backdrop-blur-sm">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto transform scale-95 transition-transform duration-200">
-            <div class="flex justify-between items-center p-4 border-b border-gray-100 sticky top-0 bg-white/90 backdrop-blur">
-                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2"><i data-lucide="settings" class="w-5 h-5 text-gray-500"></i> 設定</h3>
-                <button id="closeSettingsBtn" class="p-1 hover:bg-gray-100 rounded-full"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
-            </div>
-            <div class="p-5 space-y-5">
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">Gemini APIキー <span class="text-red-500">*</span></label>
-                    <input type="password" id="apiKeyInput" placeholder="AIzaSy..." class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-brand focus:border-brand shadow-inner">
-                    <div class="flex justify-between items-center mt-1.5 gap-2">
-                        <p class="text-[10px] text-gray-500">このブラウザ内に保存され、次回から自動入力されます。</p>
-                        <button id="clearApiKeyBtn" type="button" class="text-[10px] text-red-600 hover:underline whitespace-nowrap">保存キーを消去</button>
-                    </div>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">音声認識エンジン</label>
-                    <select id="engineSelect" class="w-full border border-gray-300 rounded-lg p-2 text-sm bg-blue-50 font-medium text-brand-dark">
-                        <option value="gemini-3.5-transcribe" selected>✨ Gemini 3.5 Transcribe (爆速・高精度言い直し補正)</option>
-                        <option value="gemini-3.8-flash">Gemini 3.8 Flash (最新標準)</option>
-                    </select>
-                    <p class="text-[10px] text-gray-500 mt-1">※3.5 Transcribeはフィラー除去や言い間違い補正（Smart Transcription）に対応しています。</p>
-                </div>
-
-                <div class="bg-brand-light/50 p-3 rounded-lg border border-brand/10 space-y-3">
-                    <div>
-                        <label class="block text-sm font-bold text-brand-dark mb-1">会議のテーマ・目的</label>
-                        <input type="text" id="themeInput" placeholder="例: 新アプリ開発のキックオフ" class="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-brand focus:border-brand">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-brand-dark mb-1">参加者名 (カンマ区切り)</label>
-                        <input type="text" id="participantsInput" placeholder="例: 山田, 佐藤, 鈴木" class="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-brand focus:border-brand">
-                        <p class="text-[10px] text-gray-500 mt-1">※事前に入力するとAIの文字起こしや要約の精度が向上します。</p>
-                    </div>
-                    <button id="clearMeetingInfoBtn" type="button" class="w-full flex items-center justify-center gap-1.5 py-2 border border-gray-300 bg-white text-gray-600 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors text-xs font-bold">
-                        <i data-lucide="eraser" class="w-3.5 h-3.5"></i> 記憶したテーマ・参加者を消去
-                    </button>
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1">録音モード</label>
-                        <select id="modeSelect" class="w-full border border-gray-300 rounded-lg p-2 text-sm">
-                            <option value="mic">対面会議 (マイク)</option>
-                            <option value="mix">オンライン会議</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-gray-700 mb-1">解析周期</label>
-                        <select id="intervalSelect" class="w-full border border-gray-300 rounded-lg p-2 text-sm">
-                            <option value="60">1分</option>
-                            <option value="300" selected>5分 (推奨)</option>
-                            <option value="600">10分</option>
-                        </select>
-                    </div>
-                </div>
-                <hr class="border-gray-100">
-                <div>
-                    <button id="modalResetBtn" class="w-full flex justify-center items-center gap-2 py-2.5 border border-red-200 text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors text-sm font-bold shadow-sm">
-                        <i data-lucide="trash-2" class="w-4 h-4"></i> これまでのデータを消去してリセット
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- マイク利用不可案内モーダル -->
-    <div id="micHelpModal" class="fixed inset-0 bg-gray-900/50 hidden flex items-center justify-center z-[70] p-4 backdrop-blur-sm">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
-            <div class="flex justify-between items-center p-4 border-b border-gray-100">
-                <h3 class="text-lg font-bold text-red-700 flex items-center gap-2"><i data-lucide="mic-off" class="w-5 h-5"></i> マイクを利用できません</h3>
-                <button id="closeMicHelpBtn" type="button" class="p-1 hover:bg-gray-100 rounded-full"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
-            </div>
-            <div class="p-5 space-y-4">
-                <div id="micHelpMessage" class="text-sm text-gray-700 leading-relaxed"></div>
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
-                    録音できない場合でも、画面右上のアップロードボタンから録音済み音声を解析できます。
-                </div>
-                <button id="closeMicHelpMainBtn" type="button" class="w-full bg-brand text-white font-bold rounded-lg py-2.5 hover:bg-brand-dark">閉じる</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="toastContainer" class="fixed top-safe mt-4 left-1/2 transform -translate-x-1/2 z-[60] w-full max-w-sm px-4 pointer-events-none flex flex-col gap-2"></div>
-
-    <footer class="bg-white border-t border-gray-200 py-3 text-center shrink-0">
-        <p class="text-xs text-gray-400 font-medium tracking-wider">作成元：北九州AIクラブ／光井企画工学事務所　バージョン 4.00SP (Gemini 4 Argon搭載)</p>
-    </footer>
-
-    <script>
-        // --- 状態管理 ---
-        let isRecording = false;
-        let isProcessingFile = false;
-        let stream = null; 
-        let micStream = null;
-        let sysStream = null;
-        let audioCtx = null;
-
-        let chunkTimer = null;
-        let progressInterval = null;
-        let startTime = 0;
-        let currentIntervalSeconds = 300; 
-        let processCounter = 0;
-        let supportedMimeType = '';
-        
-        let currentFullSummary = ""; 
-        let currentFullTranscript = ""; 
-        let cachedDocxSummary = '';
-        let cachedDocxBlob = null;
-        let cachedDocxPromise = null;
-
-        // スリープ防止
-        let wakeLock = null;
-        const noSleep = typeof NoSleep !== 'undefined' ? new NoSleep() : null;
-
-        // DOM要素
-        const recordBtn = document.getElementById('recordBtn');
-        const recordIcon = document.getElementById('recordIcon');
-        const recordText = document.getElementById('recordText');
-        const forceProcessBtn = document.getElementById('forceProcessBtn'); 
-        const uploadLabelWrapper = document.getElementById('uploadLabelWrapper');
-        const audioFileInput = document.getElementById('audioFileInput');
-        
-        const panelTranscript = document.getElementById('panelTranscript');
-        const panelSummary = document.getElementById('panelSummary');
-        const tabTranscript = document.getElementById('tabTranscript');
-        const tabSummary = document.getElementById('tabSummary');
-        
-        const settingsBtn = document.getElementById('settingsBtn');
-        const settingsModal = document.getElementById('settingsModal');
-        const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-        const apiKeyInput = document.getElementById('apiKeyInput');
-        const clearApiKeyBtn = document.getElementById('clearApiKeyBtn');
-        const engineSelect = document.getElementById('engineSelect');
-        const themeInput = document.getElementById('themeInput');
-        const participantsInput = document.getElementById('participantsInput');
-        const clearMeetingInfoBtn = document.getElementById('clearMeetingInfoBtn');
-        const modeSelect = document.getElementById('modeSelect');
-        const intervalSelect = document.getElementById('intervalSelect');
-        const modalResetBtn = document.getElementById('modalResetBtn');
-        
-        const statusIndicator = document.getElementById('statusIndicator');
-        const transcriptArea = document.getElementById('transcriptArea');
-        const summaryContent = document.getElementById('summaryContent');
-        const progressBar = document.getElementById('progressBar');
-        const processCountSpan = document.getElementById('processCount');
-        const loadingToast = document.getElementById('loadingToast');
-        
-        const exportDropdownBtn = document.getElementById('exportDropdownBtn');
-        const exportMenu = document.getElementById('exportMenu');
-        const argonSummaryBtn = document.getElementById('argonSummaryBtn');
-        const exportDocxBtn = document.getElementById('exportDocxBtn'); 
-        const exportTxtBtn = document.getElementById('exportTxtBtn');
-        const copySummaryBtn = document.getElementById('copySummaryBtn');
-        const copyTranscriptBtn = document.getElementById('copyTranscriptBtn');
-        const micHelpModal = document.getElementById('micHelpModal');
-        const micHelpMessage = document.getElementById('micHelpMessage');
-        const closeMicHelpBtn = document.getElementById('closeMicHelpBtn');
-        const closeMicHelpMainBtn = document.getElementById('closeMicHelpMainBtn');
-
-        // --- Argon 最終まとめ処理 ---
-        argonSummaryBtn.addEventListener('click', async () => {
-            if (!currentFullTranscript.trim()) {
-                showNotification("文字起こしデータがありません。先に録音・解析を行ってください。", true);
-                return;
-            }
-            if (isRecording) {
-                showNotification("録音中は最終まとめを実行できません。先に停止ボタンを押してください。", true);
-                return;
-            }
-
-            const currentApiKey = getApiKey();
-            if (!currentApiKey) return;
-
-            if (!confirm("Gemini 4 Argonを使用して、これまでの全発言から最終版の議事録を生成しますか？\n\n※Argonは非常に高精度ですが、深く思考するため処理に15秒〜30秒ほどかかります。またAPIコストがFlashモデルより高めです。")) {
-                return;
-            }
-
-            // UIをローディング状態に
-            loadingToast.querySelector('span').textContent = "Argonが深く思考中... (約15〜30秒)";
-            loadingToast.classList.remove('opacity-0');
-            argonSummaryBtn.disabled = true;
-            argonSummaryBtn.classList.add('opacity-50', 'cursor-not-allowed');
-
-            const pTheme = themeInput.value.trim();
-            const pUsers = participantsInput.value.trim();
-            
-            const prompt = `あなたは「Gemini 4 Argon」として稼働する、最高精度の議事録作成・分析AIです。
-以下の【全文字起こしデータ】を深く分析し、会議の最終版となる完璧な議事録を作成してください。
-
-【会議情報】
-- テーマ: ${pTheme || "特に設定なし"}
-- 参加者: ${pUsers || "特に設定なし"}
-
-【要求事項（Argonの深い思考力を用いてください）】
-1. 情報の抜け漏れ防止: 議論の中で決まったこと（決定事項）、やるべきこと（ToDo）、その担当者、期限を絶対に漏らさず抽出すること。
-2. 推測の排除: 担当者や期限が不明確な場合は「未定」と明記し、勝手に推測しないこと。
-3. 構造化: Markdown形式で、会議概要、議題別の詳細、決定事項、未決事項、ToDoリストを美しく整理すること。
-4. 最終版としての完成度: これまでの断片的な要約ではなく、全体を通して矛盾のない、そのまま上司やクライアントに提出できるレベルの文書に仕上げること。
-
-【全文字起こしデータ】
-${currentFullTranscript}`;
-
-            const payload = {
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    // 事実に基づくためtemperatureを低めに設定
-                    temperature: 0.2,
-                    maxOutputTokens: 8192
-                }
-            };
-
-            try {
-                // Argonモデル (gemini-4-argon) 呼び出し
-                const data = await callGeminiAPI('gemini-4-argon', currentApiKey, payload);
-                const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
-                if (responseText) {
-                    currentFullSummary = responseText;
-                    summaryContent.innerHTML = typeof marked !== 'undefined' ? marked.parse(currentFullSummary) : currentFullSummary;
-                    showNotification("Argonによる高精度な最終まとめが完了しました！");
-                    
-                    // スマホ幅の場合は議事録タブに切り替え
-                    if (window.innerWidth < 1024 && document.getElementById('tabTranscript').classList.contains('tab-active')) {
-                        switchTab('summary');
-                    }
-                } else {
-                    throw new Error('Argonからの応答が空でした。');
-                }
-            } catch (error) {
-                console.error("Argon Error:", error);
-                showNotification(`Argonの処理に失敗しました。\n${error.message}`, true);
-            } finally {
-                loadingToast.classList.add('opacity-0');
-                loadingToast.querySelector('span').textContent = "議事録を更新中...";
-                argonSummaryBtn.disabled = false;
-                argonSummaryBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                if (typeof lucide !== 'undefined') lucide.createIcons();
-            }
-        });
-
-        if (typeof lucide !== 'undefined') {
-            lucide.createIcons();
-        }
-        if (typeof marked !== 'undefined') {
-            marked.setOptions({ gfm: true, breaks: true });
-        }
-
-        // --- 初期化 ---
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedKey = localStorage.getItem('gemini_api_key_kitakyushu');
-            if (savedKey) apiKeyInput.value = savedKey;
-            
-            const savedEngine = localStorage.getItem('transcribe_engine');
-            if (savedEngine) engineSelect.value = savedEngine;
-
-            const savedTheme = localStorage.getItem('meeting_theme');
-            if (savedTheme) themeInput.value = savedTheme;
-            
-            const savedParticipants = localStorage.getItem('meeting_participants');
-            if (savedParticipants) participantsInput.value = savedParticipants;
-
-            document.addEventListener('visibilitychange', async () => {
-                if (wakeLock !== null && document.visibilityState === 'visible' && isRecording) {
-                    await requestWakeLock();
-                }
-            });
-        });
-
-        apiKeyInput.addEventListener('input', (e) => localStorage.setItem('gemini_api_key_kitakyushu', e.target.value.trim()));
-        engineSelect.addEventListener('change', (e) => localStorage.setItem('transcribe_engine', e.target.value));
-        clearApiKeyBtn.addEventListener('click', () => {
-            localStorage.removeItem('gemini_api_key_kitakyushu');
-            apiKeyInput.value = '';
-            showNotification('保存したAPIキーを消去しました。');
-        });
-        themeInput.addEventListener('input', (e) => localStorage.setItem('meeting_theme', e.target.value.trim()));
-        participantsInput.addEventListener('input', (e) => localStorage.setItem('meeting_participants', e.target.value.trim()));
-        clearMeetingInfoBtn.addEventListener('click', () => {
-            localStorage.removeItem('meeting_theme');
-            localStorage.removeItem('meeting_participants');
-            themeInput.value = '';
-            participantsInput.value = '';
-            showNotification('記憶した会議テーマと参加者名を消去しました。');
-        });
-
-        function getApiKey() {
-            const key = apiKeyInput.value.trim();
-            if (!key) {
-                showNotification("設定(⚙️)からGemini APIキーを入力してください。", true);
-                openSettingsModal();
-                return null;
-            }
-            return key;
-        }
-
-        // --- スリープ防止 (Wake Lock) ---
-        async function requestWakeLock() {
-            try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                } else if (noSleep) {
-                    noSleep.enable();
-                }
-            } catch (err) {
-                console.error(`Wake Lock error: ${err.name}, ${err.message}`);
-            }
-        }
-
-        function releaseWakeLock() {
-            if (wakeLock !== null) {
-                wakeLock.release().then(() => { wakeLock = null; });
-            }
-            if (noSleep) noSleep.disable();
-        }
-
-        function switchTab(showPanel) {
-            if (window.innerWidth >= 1024) return;
-            if (showPanel === 'transcript') {
-                panelTranscript.classList.remove('mobile-hidden');
-                panelSummary.classList.add('mobile-hidden');
-                tabTranscript.className = "flex-1 py-3 text-sm tab-active flex items-center justify-center gap-2 bg-white";
-                tabSummary.className = "flex-1 py-3 text-sm tab-inactive flex items-center justify-center gap-2 bg-gray-50 border-b border-gray-200";
-            } else {
-                panelSummary.classList.remove('mobile-hidden');
-                panelTranscript.classList.add('mobile-hidden');
-                tabSummary.className = "flex-1 py-3 text-sm tab-active flex items-center justify-center gap-2 bg-white";
-                tabTranscript.className = "flex-1 py-3 text-sm tab-inactive flex items-center justify-center gap-2 bg-gray-50 border-b border-gray-200";
-            }
-        }
-        tabTranscript.addEventListener('click', () => switchTab('transcript'));
-        tabSummary.addEventListener('click', () => switchTab('summary'));
-
-        window.addEventListener('resize', () => {
-            if (window.innerWidth >= 1024) {
-                panelTranscript.classList.remove('mobile-hidden');
-                panelSummary.classList.remove('mobile-hidden');
-            } else {
-                switchTab(tabTranscript.classList.contains('tab-active') ? 'transcript' : 'summary');
-            }
-        });
-
-        function openSettingsModal() {
-            settingsModal.classList.remove('hidden');
-            requestAnimationFrame(() => {
-                settingsModal.classList.remove('opacity-0');
-                settingsModal.querySelector('div').classList.remove('scale-95');
-            });
-        }
-        function closeSettingsModal() {
-            settingsModal.classList.add('opacity-0');
-            settingsModal.querySelector('div').classList.add('scale-95');
-            setTimeout(() => settingsModal.classList.add('hidden'), 200);
-        }
-        settingsBtn.addEventListener('click', openSettingsModal);
-        closeSettingsBtn.addEventListener('click', closeSettingsModal);
-
-        function closeMicHelpModal() { micHelpModal.classList.add('hidden'); }
-        closeMicHelpBtn.addEventListener('click', closeMicHelpModal);
-        closeMicHelpMainBtn.addEventListener('click', closeMicHelpModal);
-
-        function showNotification(msg, isError = false) {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            const bgClass = isError ? 'bg-white border-l-4 border-red-500 shadow-lg text-gray-800' : 'bg-brand shadow-lg text-white';
-            const iconHTML = isError ? '<i data-lucide="alert-triangle" class="w-5 h-5 text-red-500 shrink-0"></i>' : '<i data-lucide="check-circle-2" class="w-5 h-5 shrink-0"></i>';
-            const duration = isError ? 10000 : 4000; 
-
-            toast.className = `p-4 rounded-lg flex items-start gap-3 transition-all duration-300 transform -translate-y-4 opacity-0 ${bgClass}`;
-            toast.innerHTML = `${iconHTML} <div class="text-sm font-medium leading-snug">${msg.replace(/\n/g, '<br>')}</div>`;
-            
-            container.appendChild(toast);
-            if (typeof lucide !== 'undefined') lucide.createIcons({ root: toast });
-            
-            requestAnimationFrame(() => toast.classList.remove('-translate-y-4', 'opacity-0'));
-            setTimeout(() => {
-                toast.classList.add('-translate-y-4', 'opacity-0');
-                setTimeout(() => toast.remove(), 300);
-            }, duration); 
-        }
-
-        function getSupportedMimeType() {
-            const types = ['audio/webm', 'audio/mp4', 'audio/ogg'];
-            for (let t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
-            return '';
-        }
-
-        function updateUIState(recording, isFile = false) {
-            if (recording) {
-                recordIcon.setAttribute('data-lucide', 'square');
-                recordText.textContent = "停止";
-                recordBtn.classList.remove('bg-brand');
-                recordBtn.classList.add('bg-red-500', 'recording-pulse');
-                
-                forceProcessBtn.classList.remove('hidden'); 
-                forceProcessBtn.classList.add('flex');
-
-                statusIndicator.textContent = isFile ? `解析中` : `録音中`;
-                statusIndicator.className = isFile ? "text-[10px] sm:text-xs font-medium bg-blue-50 text-brand px-2 py-1 rounded-full whitespace-nowrap animate-pulse border border-brand/20" : "text-[10px] sm:text-xs font-medium bg-red-50 text-red-600 px-2 py-1 rounded-full whitespace-nowrap animate-pulse border border-red-200";
-                document.getElementById('progressContainer').classList.remove('hidden');
-
-                uploadLabelWrapper.classList.add('pointer-events-none', 'opacity-50');
-                settingsBtn.classList.add('pointer-events-none', 'opacity-50');
-                apiKeyInput.disabled = true;
-                
-                const pColor = isFile ? "text-brand" : "text-red-500";
-                const pText = isFile ? "音声ファイルを解析しています..." : "音声を記録・解析しています...";
-                const transcriptPlaceholder = document.getElementById('transcriptPlaceholder');
-                if (transcriptPlaceholder) transcriptPlaceholder.style.display = 'none';
-
-                const existingLoading = document.getElementById('loadingPlaceholder');
-                if (existingLoading) existingLoading.remove();
-                
-                transcriptArea.insertAdjacentHTML('beforeend', `
-                    <div id="loadingPlaceholder" class="flex flex-col items-center justify-center w-full py-8 ${pColor} fade-in bg-white rounded-lg border border-gray-100 shadow-sm mt-2">
-                        <i data-lucide="loader-2" class="w-8 h-8 animate-spin mb-3"></i>
-                        <p class="text-sm font-bold">${pText}</p>
-                        <p class="text-[10px] sm:text-xs text-gray-500 mt-2">※右上の稲妻(⚡)ボタンを押すと、即座に議事録を生成します。</p>
-                    </div>
-                `);
-                transcriptArea.scrollTop = transcriptArea.scrollHeight;
-
-            } else {
-                recordIcon.setAttribute('data-lucide', 'play');
-                recordText.textContent = "開始";
-                recordBtn.classList.add('bg-brand');
-                recordBtn.classList.remove('bg-red-500', 'recording-pulse');
-                
-                forceProcessBtn.classList.add('hidden');
-                forceProcessBtn.classList.remove('flex');
-
-                statusIndicator.textContent = "待機中";
-                statusIndicator.className = "text-[10px] sm:text-xs font-medium bg-gray-100 text-gray-600 px-2 py-1 rounded-full whitespace-nowrap border border-gray-200";
-                document.getElementById('progressContainer').classList.add('hidden');
-
-                uploadLabelWrapper.classList.remove('pointer-events-none', 'opacity-50');
-                settingsBtn.classList.remove('pointer-events-none', 'opacity-50');
-                apiKeyInput.disabled = false;
-
-                const loadingPlaceholder = document.getElementById('loadingPlaceholder');
-                if (loadingPlaceholder) loadingPlaceholder.remove();
-
-                const transcriptPlaceholder = document.getElementById('transcriptPlaceholder');
-                const hasHistory = transcriptArea.querySelector('div.bg-white, div.bg-red-50');
-                if (!hasHistory && transcriptPlaceholder) transcriptPlaceholder.style.display = 'block';
-            }
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-        }
-
-        exportDropdownBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            exportMenu.classList.toggle('show');
-        });
-
-        window.addEventListener('click', () => {
-            if (exportMenu.classList.contains('show')) {
-                exportMenu.classList.remove('show');
-            }
-        });
-
-        async function exportAndShareFile(blob, extension, mimeType) {
-            const fileName = '議事録_' + new Date().toLocaleDateString('ja-JP').replace(/\//g, '') + extension;
-            const file = new File([blob], fileName, { type: mimeType });
-            exportMenu.classList.remove('show');
-            let completed = false;
-
-            if (navigator.share && navigator.canShare) {
-                try {
-                    if (navigator.canShare({ files: [file] })) {
-                        await navigator.share({
-                            files: [file],
-                            title: 'AI議事録',
-                            text: '作成された議事録ドキュメントです。'
-                        });
-                        showNotification('ドキュメントを共有しました。');
-                        completed = true;
-                    }
-                } catch (err) {
-                    if (err.name === 'AbortError') return false;
-                }
-            }
-
-            if (!completed && window.showSaveFilePicker) {
-                try {
-                    const handle = await window.showSaveFilePicker({
-                        suggestedName: fileName,
-                        types: [{ description: 'ドキュメント', accept: { [mimeType]: [extension] } }]
-                    });
-                    const writable = await handle.createWritable();
-                    await writable.write(blob);
-                    await writable.close();
-                    showNotification('ドキュメントを保存しました。');
-                    completed = true;
-                } catch (err) {
-                    if (err.name === 'AbortError') return false;
-                }
-            }
-
-            if (!completed) {
-                try {
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = fileName;
-                    a.style.display = 'none';
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    setTimeout(() => URL.revokeObjectURL(url), 60000);
-                    showNotification('ドキュメントをダウンロードしました。');
-                    completed = true;
-                } catch (err) {
-                    showNotification(`出力に失敗しました。\n${err.message}`, true);
-                    return false;
-                }
-            }
-            return completed;
-        }
-
-        // --- Word (.docx) 生成処理 ---
-        function markdownInlineToDocxRuns(text, TextRun) {
-            const normalized = String(text || '')
-                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
-                .replace(/~~([^~]+)~~/g, '$1')
-                .replace(/`([^`]+)`/g, '$1');
-
-            return normalized.split(/(\*\*[^*]+\*\*)/g)
-                .filter(Boolean)
-                .map(part => {
-                    const bold = part.startsWith('**') && part.endsWith('**');
-                    return new TextRun({
-                        text: bold ? part.slice(2, -2) : part,
-                        bold: bold
-                    });
-                });
-        }
-
-        async function createStandardDocxBlob(markdown) {
-            if (typeof docx === 'undefined') {
-                throw new Error('DOCX生成ライブラリを読み込めませんでした。通信状態を確認してください。');
-            }
-
-            const {
-                Document: DocxDocument,
-                Packer,
-                Paragraph,
-                TextRun,
-                HeadingLevel,
-                AlignmentType
-            } = docx;
-
-            const paragraphs = [
-                new Paragraph({
-                    text: 'AI議事録',
-                    heading: HeadingLevel.TITLE,
-                    alignment: AlignmentType.CENTER,
-                    spacing: { after: 120 }
-                }),
-                new Paragraph({
-                    children: [new TextRun({ text: `出力日時：${new Date().toLocaleString('ja-JP')}`, color: '666666', size: 18 })],
-                    alignment: AlignmentType.RIGHT,
-                    spacing: { after: 300 }
-                })
-            ];
-
-            let inCodeBlock = false;
-            String(markdown || '').replace(/\r\n/g, '\n').split('\n').forEach(rawLine => {
-                const line = rawLine.replace(/\t/g, '    ');
-                const trimmed = line.trim();
-
-                if (/^```/.test(trimmed)) {
-                    inCodeBlock = !inCodeBlock;
-                    return;
-                }
-                if (!trimmed) {
-                    paragraphs.push(new Paragraph({ text: '', spacing: { after: 40 } }));
-                    return;
-                }
-
-                const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-                if (heading) {
-                    const levels = [
-                        HeadingLevel.HEADING_1,
-                        HeadingLevel.HEADING_2,
-                        HeadingLevel.HEADING_3,
-                        HeadingLevel.HEADING_4,
-                        HeadingLevel.HEADING_5,
-                        HeadingLevel.HEADING_6
-                    ];
-                    paragraphs.push(new Paragraph({
-                        children: markdownInlineToDocxRuns(heading[2], TextRun),
-                        heading: levels[heading[1].length - 1],
-                        keepNext: true,
-                        spacing: { before: 240, after: 120 }
-                    }));
-                    return;
-                }
-
-                if (/^([-*_])\1\1+$/.test(trimmed)) {
-                    paragraphs.push(new Paragraph({ thematicBreak: true }));
-                    return;
-                }
-
-                const bullet = line.match(/^(\s*)[-+*]\s+(.+)$/);
-                if (bullet) {
-                    const level = Math.min(Math.floor(bullet[1].length / 2), 5);
-                    paragraphs.push(new Paragraph({
-                        children: markdownInlineToDocxRuns(bullet[2], TextRun),
-                        bullet: { level },
-                        spacing: { after: 80 }
-                    }));
-                    return;
-                }
-
-                const numbered = line.match(/^(\s*)(\d+)[.)]\s+(.+)$/);
-                if (numbered) {
-                    const level = Math.min(Math.floor(numbered[1].length / 2), 5);
-                    paragraphs.push(new Paragraph({
-                        children: markdownInlineToDocxRuns(`${numbered[2]}. ${numbered[3]}`, TextRun),
-                        indent: { left: 360 * (level + 1), hanging: 240 },
-                        spacing: { after: 80 }
-                    }));
-                    return;
-                }
-
-                const quote = trimmed.match(/^>\s?(.*)$/);
-                if (quote) {
-                    paragraphs.push(new Paragraph({
-                        children: [new TextRun({ text: quote[1], italics: true, color: '555555' })],
-                        indent: { left: 480 },
-                        spacing: { after: 100 }
-                    }));
-                    return;
-                }
-
-                paragraphs.push(new Paragraph({
-                    children: inCodeBlock
-                        ? [new TextRun({ text: trimmed, font: 'Consolas', size: 19 })]
-                        : markdownInlineToDocxRuns(trimmed, TextRun),
-                    spacing: { after: 120, line: 360 }
-                }));
-            });
-
-            const documentFile = new DocxDocument({
-                creator: 'AI議事録ツール',
-                title: 'AI議事録',
-                description: 'Geminiで生成した議事録',
-                styles: {
-                    default: {
-                        document: {
-                            run: { font: 'Yu Gothic', size: 22 },
-                            paragraph: { spacing: { line: 360, after: 120 } }
-                        }
-                    }
-                },
-                sections: [{
-                    properties: {
-                        page: { margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } }
-                    },
-                    children: paragraphs
-                }]
-            });
-
-            return Packer.toBlob(documentFile);
-        }
-
-        function prepareDocxCache(markdown) {
-            const source = String(markdown || '');
-            if (cachedDocxSummary === source && cachedDocxBlob) {
-                return Promise.resolve(cachedDocxBlob);
-            }
-            if (cachedDocxSummary === source && cachedDocxPromise) {
-                return cachedDocxPromise;
-            }
-
-            cachedDocxSummary = source;
-            cachedDocxBlob = null;
-            cachedDocxPromise = createStandardDocxBlob(source)
-                .then(blob => {
-                    if (cachedDocxSummary === source) cachedDocxBlob = blob;
-                    return blob;
-                })
-                .catch(error => {
-                    if (cachedDocxSummary === source) {
-                        cachedDocxSummary = '';
-                        cachedDocxBlob = null;
-                        cachedDocxPromise = null;
-                    }
-                    throw error;
-                });
-            return cachedDocxPromise;
-        }
-
-        exportDocxBtn.addEventListener('click', async () => {
-            if (!currentFullSummary.trim()) {
-                showNotification('出力する議事録がありません。', true);
-                return;
-            }
-
-            try {
-                const isReady = cachedDocxSummary === currentFullSummary && cachedDocxBlob;
-                if (!isReady) showNotification('Wordファイルを生成しています...');
-                const blob = isReady ? cachedDocxBlob : await prepareDocxCache(currentFullSummary);
-                if (!blob || blob.size < 1000) throw new Error('生成されたWordファイルが空です。');
-                await exportAndShareFile(blob, '.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-            } catch (err) {
-                showNotification(`docxの生成に失敗しました。\n${err.message}`, true);
-                console.error(err);
-            }
-        });
-
-        // --- テキスト (.txt) 生成と出力 ---
-        exportTxtBtn.addEventListener('click', async () => {
-            if (currentFullSummary.trim() === "") {
-                showNotification("出力する議事録がありません。", true);
-                return;
-            }
-
-            let plainText = currentFullSummary
-                .replace(/#+\s/g, '')
-                .replace(/\*\*/g, '')
-                .replace(/\*/g, '・');
-
-            const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), plainText], { type: 'text/plain;charset=utf-8' });
-            await exportAndShareFile(blob, '.txt', 'text/plain');
-        });
-
-        // --- コピー機能の実装 ---
-        function executeCopy(text, successMsg) {
-            if (!text || text.trim() === "") {
-                showNotification("コピーするデータがありません。", true);
-                return;
-            }
-
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(text).then(() => {
-                    showNotification(successMsg);
-                }).catch(() => {
-                    fallbackCopy(text, successMsg);
-                });
-            } else {
-                fallbackCopy(text, successMsg);
-            }
-        }
-
-        function fallbackCopy(text, successMsg) {
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            try {
-                if (document.execCommand('copy')) {
-                    showNotification(successMsg);
-                } else {
-                    throw new Error("execCommand failed");
-                }
-            } catch (err) {
-                showNotification("クリップボードへのコピーに失敗しました。", true);
-            } finally {
-                document.body.removeChild(textarea);
-            }
-        }
-
-        copyTranscriptBtn.addEventListener('click', () => {
-            executeCopy(currentFullTranscript, "文字起こし履歴をコピーしました！");
-        });
-
-        copySummaryBtn.addEventListener('click', () => {
-            const el = document.getElementById('summaryContent');
-            if (!el || !currentFullSummary.trim()) {
-                showNotification("コピーする議事録がありません。", true);
-                return;
-            }
-
-            // リッチテキストとしての選択コピーを試みる
-            try {
-                const selection = window.getSelection();
-                const range = document.createRange();
-                range.selectNodeContents(el);
-                selection.removeAllRanges();
-                selection.addRange(range);
-                if (document.execCommand('copy')) {
-                    selection.removeAllRanges();
-                    showNotification("議事録をクリップボードにコピーしました！");
-                } else {
-                    selection.removeAllRanges();
-                    executeCopy(currentFullSummary, "議事録（テキスト）をコピーしました！");
-                }
-            } catch (err) {
-                executeCopy(currentFullSummary, "議事録をコピーしました！");
-            }
-        });
-
-        let currentRecorder = null;
-        let processingQueue = Promise.resolve();
-
-        async function startRecording() {
-            const currentApiKey = getApiKey();
-            if (!currentApiKey) return;
-
-            const mode = modeSelect.value;
-            supportedMimeType = getSupportedMimeType();
-            
-            if (!supportedMimeType) { showNotification("ブラウザが音声録音に非対応です。", true); return; }
-
-            try {
-                if (mode === 'mix') {
-                    if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream) {
-                        showNotification("【iPhone・iPadではオンライン会議モードを利用できません】\n対面会議モードに切り替えてご利用ください。", true);
-                        openSettingsModal();
-                        return;
-                    }
-                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    sysStream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: true });
-                    if (sysStream.getAudioTracks().length === 0) throw new Error("NO_AUDIO_TRACK");
-
-                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    const dest = audioCtx.createMediaStreamDestination();
-                    audioCtx.createMediaStreamSource(micStream).connect(dest);
-                    audioCtx.createMediaStreamSource(sysStream).connect(dest);
-                    stream = dest.stream;
-                    sysStream.getVideoTracks()[0].onended = () => { if(isRecording) stopRecording(); };
-                } else {
-                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream = micStream;
-                }
-
-                isRecording = true;
-                currentIntervalSeconds = parseInt(intervalSelect.value, 10);
-                
-                await requestWakeLock();
-                updateUIState(true, false);
-                recordingLoop(currentApiKey);
-
-            } catch (err) {
-                cleanupStreams(); 
-                showNotification("録音の開始に失敗しました。", true);
-            }
-        }
-
-        function cleanupStreams() {
-            if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-            if (sysStream) { sysStream.getTracks().forEach(t => t.stop()); sysStream = null; }
-            if (audioCtx) { audioCtx.close(); audioCtx = null; }
-            stream = null;
-        }
-
-        function stopRecording() {
-            isRecording = false;
-            releaseWakeLock();
-            
-            if (chunkTimer) clearTimeout(chunkTimer);
-            if (progressInterval) clearInterval(progressInterval);
-            if (currentRecorder && currentRecorder.state !== 'inactive') {
-                currentRecorder.stop(); 
-            } else {
-                cleanupStreams(); 
-                updateUIState(false);
-            }
-        }
-
-        forceProcessBtn.addEventListener('click', () => {
-            if (!isRecording || !currentRecorder) return;
-            if (chunkTimer) clearTimeout(chunkTimer);
-            if (currentRecorder.state !== 'inactive') {
-                showNotification("現在の録音データを解析に回しています...");
-                currentRecorder.stop(); 
-            }
-        });
-
-        async function recordingLoop(apiKey) {
-            while (isRecording) {
-                await recordAndProcessChunk(apiKey);
-            }
-            cleanupStreams();
-            updateUIState(false);
-            progressBar.style.width = '0%';
-        }
-
-        function recordAndProcessChunk(apiKey) {
-            return new Promise((resolve) => {
-                if (!isRecording) { resolve(); return; }
-
-                const options = supportedMimeType ? { mimeType: supportedMimeType } : {};
-                try { currentRecorder = new MediaRecorder(stream, options); } 
-                catch(e) { currentRecorder = new MediaRecorder(stream); }
-                
-                const chunks = [];
-                currentRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-
-                currentRecorder.onstop = () => {
-                    const audioType = supportedMimeType || 'audio/webm';
-                    const audioBlob = new Blob(chunks, { type: audioType });
-                    const chunkIndex = processCounter + 1;
-                    
-                    resolve(); 
-
-                    if (audioBlob.size > 0 && (isRecording || chunks.length > 0)) {
-                        processCounter++;
-                        processCountSpan.textContent = `${processCounter}回更新`;
-                        processingQueue = processingQueue.then(() =>
-                            processAudioWithGeminiPipeline(audioBlob, chunkIndex, audioType, apiKey)
-                        );
-                    }
-                };
-
-                currentRecorder.start();
-                
-                startTime = Date.now();
-                if (progressInterval) clearInterval(progressInterval);
-                progressInterval = setInterval(() => {
-                    const elapsed = (Date.now() - startTime) / 1000;
-                    const percent = Math.min((elapsed / currentIntervalSeconds) * 100, 100);
-                    progressBar.style.width = `${percent}%`;
-                }, 100);
-
-                chunkTimer = setTimeout(() => {
-                    if (currentRecorder.state !== 'inactive') {
-                        currentRecorder.stop();
-                    }
-                }, currentIntervalSeconds * 1000);
-            });
-        }
-
-        function blobToBase64(blob) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                reader.onerror = reject; reader.readAsDataURL(blob);
-            });
-        }
-
-        async function callGeminiAPI(modelName, apiKey, payload) {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                const apiMessage = data && data.error && data.error.message ? data.error.message : '詳細不明';
-                throw new Error(`Gemini APIエラー [${modelName}] (${response.status}): ${apiMessage}`);
-            }
-            return data;
-        }
-
-        async function processAudioWithGeminiPipeline(blob, chunkIndex, audioType, apiKey) {
-            loadingToast.classList.remove('opacity-0');
-            const selectedEngine = engineSelect.value || 'gemini-3.5-transcribe';
-            const pTheme = themeInput.value.trim();
-            const pUsers = participantsInput.value.trim();
-
-            try {
-                const base64Audio = await blobToBase64(blob);
-                const cleanMimeType = audioType.split(';')[0]; 
-                let segmentTranscript = "";
-
-                // --- ステップ1: 音声認識 (Transcribe) ---
-                if (selectedEngine === 'gemini-3.5-transcribe') {
-                    // Gemini 3.5 Transcribe での文字起こし
-                    const transcribePrompt = `音声を正確かつ自然な日本語にテキスト化してください。
-【指示】
-- 話者名（判別できる場合は「山田:」「話者A:」など）を付与すること。
-- 「あー」「えー」等のフィラーを除去し、自己修正（例：「火曜、あ、水曜で」→「水曜で」）を綺麗に整形（Smart Transcription）してください。
-- 参加者リスト情報: ${pUsers || "指定なし"}`;
-
-                    const transcribePayload = {
-                        contents: [{ parts: [{ text: transcribePrompt }, { inlineData: { mimeType: cleanMimeType, data: base64Audio } }] }]
-                    };
-
-                    const transcribeResult = await callGeminiAPI('gemini-3.8-flash', apiKey, transcribePayload); // フォールバック互換含む
-                    segmentTranscript = transcribeResult?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "（音声認識なし）";
-                } else {
-                    // 従来モデルでの1発処理プロンプト（互換用）
-                    segmentTranscript = null; // まとめてステップ2で実施
-                }
-
-                // --- ステップ2: 全体議事録の構造化・統合要約 (Gemini 3.8 Flash) ---
-                const prompt = `あなたは高精度な議事録作成アシスタントです。
-【現在の全体議事録】に【今回の音声セグメント】の内容を正しく統合し、最新の議事録を作成してください。
-
-【会議情報】
-- テーマ: ${pTheme || "特に設定なし"}
-- 参加者: ${pUsers || "特に設定なし"}
-
-【最重要ルール】
-1. ファクト優先: 音声にない内容を推測・補完しない。聞き取り不明な箇所は「[聞き取り不明]」と記載する。
-2. 話者識別: 確信がない場合は人名を勝手に確定せず「話者A:」「話者B:」とする。
-3. 過去ログの保護: 過去の議事録を不用意に改変・削除せず、背景・理由・数字・条件・ToDoなどの文脈を詳細に残すこと。
-4. 決定事項とToDo: 明確に合意されたもののみ記録し、担当者・期限が不明なToDoは「未定」とする。
-
-【出力形式】
-JSON形式で以下のプロパティを返してください。
-- transcript: 今回の文字起こし（話者名付き）
-- summary: Markdown形式の最新統合議事録
+      `;
+
+      el.transcript.append(card);
+      el.transcript.scrollTop = el.transcript.scrollHeight;
+    }
+
+    async function transcribeAudio(blob, mimeType, apiKey) {
+      const audio = await blobToBase64(blob);
+
+      const prompt = `次の音声を正確かつ自然な日本語に文字起こししてください。
+- 話者を判別できる場合のみ、参加者リストを参考に「氏名:」を付ける。確信できない場合は「話者A:」のようにする。
+- フィラーを除き、言い直しは最終的な発言に整える。
+- 内容を要約せず、発言内容を残す。
+${meetingInfo()}`;
+
+      const data = await callGemini(MODELS.TRANSCRIBE, apiKey, {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType, data: audio } }
+          ]
+        }],
+        generationConfig: { temperature: 0 }
+      });
+
+      const transcript = textFromResponse(data);
+
+      if (!transcript) {
+        throw new Error('文字起こし結果が空でした。');
+      }
+
+      return transcript;
+    }
+
+    async function createUpdatedMinutes(transcript, apiKey) {
+      const prompt = `あなたは正確な日本語の議事録作成者です。現在の議事録に今回の文字起こしを統合し、Markdown形式で完全な最新議事録を返してください。
+
+${meetingInfo()}
+
+【厳守】
+- 発言にない事実、担当者、期限、数値を推測・補完しない。
+- 決定事項は明確に合意された内容だけを記載する。
+- ToDoの担当者・期限が不明なら「未定」と記載する。
+- 過去の議事録の事実を削除・改変せず、今回の内容を反映する。
+- 文書は「# 会議名」「## 会議概要」「## 議題別の詳細」「## 決定事項」「## ToDo」「## 未決事項」の順を基本にする。該当内容がない節は「なし」と記載する。
 
 【現在の全体議事録】
-${currentFullSummary || "まだ議事録はありません。今回の内容から作成を開始してください。"}
-`;
+${currentFullSummary || '（まだありません）'}
 
-                const payloadParts = segmentTranscript 
-                    ? [{ text: `${prompt}\n\n【今回の音声のテキスト化結果】\n${segmentTranscript}` }]
-                    : [{ text: prompt }, { inlineData: { mimeType: cleanMimeType, data: base64Audio } }];
+【今回の文字起こし】
+${transcript}`;
 
-                const summaryPayload = {
-                    contents: [{ parts: payloadParts }],
-                    generationConfig: {
-                        responseMimeType: "application/json",
-                        maxOutputTokens: 8192, 
-                        responseSchema: {
-                            type: "OBJECT",
-                            properties: {
-                                transcript: { type: "STRING" },
-                                summary: { type: "STRING" }
-                            },
-                            required: ["transcript", "summary"]
-                        }
-                    }
-                };
+      const data = await callGemini(MODELS.ARGON, apiKey, {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.15,
+          maxOutputTokens: 8192
+        }
+      });
 
-                const summaryData = await callGeminiAPI('gemini-3.8-flash', apiKey, summaryPayload);
-                const responseText = summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      const minutes = textFromResponse(data);
 
-                if (responseText) {
-                    const result = JSON.parse(responseText);
-                    const finalTranscript = segmentTranscript || result.transcript || '';
-                    const finalSummary = result.summary || '';
+      if (!minutes) {
+        throw new Error('議事録の生成結果が空でした。');
+      }
 
-                    if (finalSummary && !finalSummary.includes("エラーにより")) {
-                        currentFullSummary = finalSummary;
-                    }
-                    appendResults(finalTranscript, finalSummary, chunkIndex);
-                    return true;
-                } else {
-                    throw new Error('議事録データを更新できませんでした。');
-                }
-            } catch (error) {
-                console.error(`Pipeline Error (Chunk #${chunkIndex}):`, error);
-                showNotification(error.message, true); 
-                appendResults(`*(処理失敗)*\n${error.message}`, null, chunkIndex, true);
-                return false;
-            } finally { loadingToast.classList.add('opacity-0'); }
+      return minutes;
+    }
+
+    async function processAudio(blob, index, mimeType, apiKey, directAudio = false) {
+      try {
+        let transcript;
+
+        if (directAudio) {
+          const audio = await blobToBase64(blob);
+
+          const data = await callGemini(MODELS.ARGON, apiKey, {
+            contents: [{
+              parts: [
+                { text: `この会議音声を文字起こししてください。${meetingInfo()}` },
+                { inlineData: { mimeType, data: audio } }
+              ]
+            }],
+            generationConfig: { temperature: 0 }
+          });
+
+          transcript = textFromResponse(data);
+        } else {
+          transcript = await transcribeAudio(blob, mimeType, apiKey);
         }
 
-        function appendResults(transcript, summary, chunkIndex, isError = false) {
-            const loadingPlaceholder = document.getElementById('loadingPlaceholder');
-            if (loadingPlaceholder) loadingPlaceholder.remove();
-            
-            const timeStr = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-            const bgColor = isError ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200';
-            
-            if (!isError && transcript) { currentFullTranscript += `[${timeStr} - パート${chunkIndex}]\n${transcript}\n\n`; }
+        const minutes = await createUpdatedMinutes(transcript, apiKey);
 
-            const transcriptHtml = `
-                <div class="${bgColor} p-3 sm:p-4 rounded-lg border shadow-sm fade-in mb-3">
-                    <div class="flex items-center gap-2 mb-2 pb-2 border-b border-gray-100">
-                        <span class="bg-gray-100 text-gray-500 text-[10px] sm:text-xs px-2 py-0.5 rounded border border-gray-200">#${chunkIndex}</span>
-                        <span class="text-[10px] sm:text-xs text-gray-400"><i data-lucide="clock" class="w-3 h-3 inline mr-1"></i>${timeStr} 完了</span>
-                    </div>
-                    <div class="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">${transcript}</div>
-                </div>
-            `;
-            transcriptArea.insertAdjacentHTML('beforeend', transcriptHtml);
-            transcriptArea.scrollTop = transcriptArea.scrollHeight;
+        appendTranscript(transcript, index);
+        setSummary(minutes);
+        el.count.textContent = `${index}回更新`;
+      } catch (error) {
+        console.error(error);
+        appendTranscript(`処理に失敗しました。\n${error.message}`, index, true);
+        notify(error.message, true);
+      }
+    }
 
-            if (!isError && summary) { 
-                summaryContent.innerHTML = typeof marked !== 'undefined' ? marked.parse(summary) : summary;
-                if (window.innerWidth < 1024 && document.getElementById('tabTranscript').classList.contains('tab-active')) {
-                    switchTab('summary');
-                }
-            }
-            if (typeof lucide !== 'undefined') lucide.createIcons();
+    async function startRecording() {
+      const apiKey = getApiKey();
+
+      if (!apiKey) return;
+
+      supportedMimeType = getSupportedMimeType();
+
+      if (!supportedMimeType) {
+        notify('このブラウザは音声録音に対応していません。', true);
+        return;
+      }
+
+      try {
+        if (el.mode.value === 'mix') {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          sysStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true
+          });
+
+          if (!sysStream.getAudioTracks().length) {
+            throw new Error('共有画面の音声が選択されていません。共有時に音声もオンにしてください。');
+          }
+
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const destination = audioCtx.createMediaStreamDestination();
+
+          audioCtx.createMediaStreamSource(micStream).connect(destination);
+          audioCtx.createMediaStreamSource(sysStream).connect(destination);
+
+          stream = destination.stream;
+
+          sysStream.getVideoTracks()[0].onended = () => {
+            if (isRecording) stopRecording();
+          };
+        } else {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream = micStream;
         }
 
-        recordBtn.addEventListener('click', () => {
-            if (isProcessingFile) { showNotification("ファイル解析中は中断できません。", true); return; }
-            if (isRecording) stopRecording(); else startRecording();
+        isRecording = true;
+        currentIntervalSeconds = Number(el.interval.value);
+
+        updateUi(true);
+        recordLoop(apiKey);
+      } catch (error) {
+        cleanStreams();
+        notify(`録音を開始できませんでした。${error.message ? ` ${error.message}` : ''}`, true);
+      }
+    }
+
+    function cleanStreams() {
+      [micStream, sysStream]
+        .filter(Boolean)
+        .forEach(s => s.getTracks().forEach(t => t.stop()));
+
+      micStream = null;
+      sysStream = null;
+      stream = null;
+
+      if (audioCtx) {
+        audioCtx.close();
+        audioCtx = null;
+      }
+    }
+
+    function stopRecording() {
+      isRecording = false;
+
+      clearTimeout(chunkTimer);
+      clearInterval(progressTimer);
+
+      if (currentRecorder?.state !== 'inactive') {
+        currentRecorder.stop();
+      }
+    }
+
+    async function recordLoop(apiKey) {
+      while (isRecording) {
+        await recordChunk(apiKey);
+      }
+
+      cleanStreams();
+      updateUi(false);
+    }
+
+    function recordChunk(apiKey) {
+      return new Promise(resolve => {
+        if (!isRecording) {
+          resolve();
+          return;
+        }
+
+        const parts = [];
+
+        currentRecorder = new MediaRecorder(
+          stream,
+          supportedMimeType ? { mimeType: supportedMimeType } : undefined
+        );
+
+        currentRecorder.ondataavailable = e => {
+          if (e.data.size) parts.push(e.data);
+        };
+
+        currentRecorder.onstop = () => {
+          clearInterval(progressTimer);
+
+          const blob = new Blob(parts, {
+            type: supportedMimeType || 'audio/webm'
+          });
+
+          if (blob.size) {
+            const index = ++processCounter;
+
+            processingQueue = processingQueue.then(() =>
+              processAudio(
+                blob,
+                index,
+                (supportedMimeType || 'audio/webm').split(';')[0],
+                apiKey,
+                el.engine.value === MODELS.ARGON
+              )
+            );
+          }
+
+          resolve();
+        };
+
+        currentRecorder.start();
+        startTime = Date.now();
+
+        progressTimer = setInterval(() => {
+          const percent = Math.min(
+            100,
+            ((Date.now() - startTime) / 1000 / currentIntervalSeconds) * 100
+          );
+
+          el.progress.style.width = `${percent}%`;
+        }, 150);
+
+        chunkTimer = setTimeout(() => {
+          if (currentRecorder?.state !== 'inactive') {
+            currentRecorder.stop();
+          }
+        }, currentIntervalSeconds * 1000);
+      });
+    }
+
+    el.recordBtn.addEventListener('click', () => {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    });
+
+    el.audioInput.addEventListener('change', async e => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+
+      if (!file) return;
+
+      const apiKey = getApiKey();
+
+      if (!apiKey) return;
+
+      isProcessingFile = true;
+      updateUi(true, true);
+
+      const index = ++processCounter;
+
+      try {
+        await processAudio(
+          file,
+          index,
+          file.type || 'audio/mpeg',
+          apiKey,
+          el.engine.value === MODELS.ARGON
+        );
+      } finally {
+        isProcessingFile = false;
+        updateUi(false);
+      }
+    });
+
+    $('finalSummaryBtn').addEventListener('click', async () => {
+      if (isRecording) {
+        notify('録音を停止し、処理中の音声解析が完了してから実行してください。', true);
+        return;
+      }
+
+      if (!currentFullTranscript.trim()) {
+        notify('文字起こしデータがありません。', true);
+        return;
+      }
+
+      const apiKey = getApiKey();
+
+      if (!apiKey) return;
+
+      const button = $('finalSummaryBtn');
+
+      button.disabled = true;
+      button.classList.add('opacity-50');
+
+      try {
+        await processingQueue;
+
+        const prompt = `あなたは提出用の議事録を作成する専門家です。以下の全文字起こしだけに基づき、最終版の議事録をMarkdown形式で作成してください。
+
+${meetingInfo()}
+
+【厳守】
+- 事実を推測しない。担当者・期限が明示されない場合は「未定」とする。
+- 決定事項、ToDo、未決事項を漏れなく構造化する。
+- 会話の背景・理由・条件・数値は重要なものを残す。
+- そのまま共有できる自然で簡潔な日本語にする。
+
+【全文字起こし】
+${currentFullTranscript}`;
+
+        const data = await callGemini(MODELS.FINAL_SUMMARY, apiKey, {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192
+          }
         });
-    </script>
+
+        const summary = textFromResponse(data);
+
+        if (!summary) {
+          throw new Error('最終まとめの生成結果が空でした。');
+        }
+
+        setSummary(summary);
+        notify('Gemini 4 Carbon による最終まとめが完了しました。');
+      } catch (error) {
+        console.error(error);
+        notify(error.message, true);
+      } finally {
+        button.disabled = false;
+        button.classList.remove('opacity-50');
+      }
+    });
+
+    function copyText(text, message) {
+      if (!text?.trim()) {
+        notify('コピーする内容がありません。', true);
+        return;
+      }
+
+      navigator.clipboard?.writeText(text)
+        .then(() => notify(message))
+        .catch(() => {
+          const area = document.createElement('textarea');
+
+          area.value = text;
+          document.body.append(area);
+          area.select();
+
+          document.execCommand('copy');
+          area.remove();
+
+          notify(message);
+        });
+    }
+
+    $('copyTranscriptBtn').addEventListener('click', () => {
+      copyText(currentFullTranscript, '文字起こしをコピーしました。');
+    });
+
+    $('copySummaryBtn').addEventListener('click', () => {
+      copyText(currentFullSummary, '議事録をコピーしました。');
+    });
+
+    async function saveBlob(blob, extension, mime) {
+      const name = `議事録_${new Date().toLocaleDateString('ja-JP').replaceAll('/', '')}${extension}`;
+      const file = new File([blob], name, { type: mime });
+
+      if (navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'AI議事録'
+          });
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), {
+        href: url,
+        download: name
+      });
+
+      a.click();
+
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+
+    $('exportTxtBtn').addEventListener('click', async () => {
+      if (!currentFullSummary.trim()) {
+        notify('出力する議事録がありません。', true);
+        return;
+      }
+
+      await saveBlob(
+        new Blob(['\uFEFF', currentFullSummary], {
+          type: 'text/plain;charset=utf-8'
+        }),
+        '.txt',
+        'text/plain'
+      );
+
+      notify('テキストを出力しました。');
+    });
+
+    function inlineRuns(value, TextRun) {
+      const source = String(value ?? '');
+      const token = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g;
+
+      let last = 0;
+      let match;
+      const runs = [];
+
+      const plain = text => {
+        if (text) {
+          runs.push(new TextRun({
+            text: text.replace(/\\([\\`*_[\]{}()#+.!|-])/g, '$1')
+          }));
+        }
+      };
+
+      while ((match = token.exec(source))) {
+        plain(source.slice(last, match.index));
+
+        const part = match[0];
+        let text = part;
+        const options = {};
+
+        if (/^\*\*|^__/.test(part)) {
+          text = part.slice(2, -2);
+          options.bold = true;
+        } else if (/^~~/.test(part)) {
+          text = part.slice(2, -2);
+          options.strike = true;
+        } else if (/^`/.test(part)) {
+          text = part.slice(1, -1);
+          options.font = 'Consolas';
+          options.shading = { fill: 'F1F5F9' };
+        } else if (/^\[/.test(part)) {
+          const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+          text = link[1];
+          options.color = '0563C1';
+          options.underline = { type: 'single' };
+        } else {
+          text = part.slice(1, -1);
+          options.italics = true;
+        }
+
+        runs.push(new TextRun({ text, ...options }));
+        last = token.lastIndex;
+      }
+
+      plain(source.slice(last));
+
+      return runs.length ? runs : [new TextRun({ text: '' })];
+    }
+
+    function tableCells(line) {
+      const text = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+      const cells = [];
+
+      let cell = '';
+      let escaped = false;
+
+      for (const char of text) {
+        if (char === '|' && !escaped) {
+          cells.push(cell.trim());
+          cell = '';
+        } else {
+          cell += char;
+        }
+
+        escaped = char === '\\' && !escaped;
+
+        if (char !== '\\') {
+          escaped = false;
+        }
+      }
+
+      cells.push(cell.trim());
+
+      return cells;
+    }
+
+    function isSeparator(line) {
+      const cells = tableCells(line);
+
+      return cells.length && cells.every(c =>
+        /^:?-{3,}:?$/.test(c.replace(/\s/g, ''))
+      );
+    }
+
+    async function createDocx(markdown) {
+      if (typeof docx === 'undefined') {
+        throw new Error('Word出力ライブラリを読み込めませんでした。');
+      }
+
+      const {
+        Document,
+        Packer,
+        Paragraph,
+        TextRun,
+        HeadingLevel,
+        Table,
+        TableRow,
+        TableCell,
+        WidthType,
+        BorderStyle,
+        ShadingType
+      } = docx;
+
+      const children = [];
+      const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
+
+      let inCode = false;
+
+      const border = {
+        style: BorderStyle.SINGLE,
+        size: 4,
+        color: 'CBD5E1'
+      };
+
+      const pushTable = (header, rows) => {
+        const makeRow = (cells, head = false) => new TableRow({
+          children: cells.map(value => new TableCell({
+            width: {
+              size: 100 / cells.length,
+              type: WidthType.PERCENTAGE
+            },
+            shading: head
+              ? { type: ShadingType.CLEAR, fill: 'DBEAFE' }
+              : undefined,
+            borders: {
+              top: border,
+              bottom: border,
+              left: border,
+              right: border
+            },
+            children: [
+              new Paragraph({
+                children: inlineRuns(value, TextRun),
+                spacing: { after: 60 }
+              })
+            ]
+          }))
+        });
+
+        children.push(new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            makeRow(header, true),
+            ...rows.map(row => makeRow(row))
+          ]
+        }));
+      };
+
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i];
+        const trimmed = raw.trim();
+
+        if (/^```/.test(trimmed)) {
+          inCode = !inCode;
+          continue;
+        }
+
+        if (
+          !inCode &&
+          trimmed.includes('|') &&
+          i + 1 < lines.length &&
+          isSeparator(lines[i + 1])
+        ) {
+          const header = tableCells(raw);
+          const rows = [];
+
+          i += 2;
+
+          while (
+            i < lines.length &&
+            lines[i].trim().includes('|') &&
+            !/^\s*$/.test(lines[i])
+          ) {
+            rows.push(tableCells(lines[i]));
+            i++;
+          }
+
+          i--;
+
+          pushTable(header, rows);
+          continue;
+        }
+
+        if (!trimmed) {
+          children.push(new Paragraph({
+            text: '',
+            spacing: { after: 80 }
+          }));
+          continue;
+        }
+
+        const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+
+        if (heading) {
+          const levels = [
+            HeadingLevel.HEADING_1,
+            HeadingLevel.HEADING_2,
+            HeadingLevel.HEADING_3,
+            HeadingLevel.HEADING_4,
+            HeadingLevel.HEADING_5,
+            HeadingLevel.HEADING_6
+          ];
+
+          children.push(new Paragraph({
+            children: inlineRuns(heading[2], TextRun),
+            heading: levels[heading[1].length - 1],
+            keepNext: true,
+            spacing: { before: 240, after: 120 }
+          }));
+
+          continue;
+        }
+
+        if (/^([-*_])\1\1+$/.test(trimmed)) {
+          children.push(new Paragraph({ thematicBreak: true }));
+          continue;
+        }
+
+        const bullet = raw.match(/^(\s*)[-+*]\s+(.*)$/);
+
+        if (bullet) {
+          children.push(new Paragraph({
+            children: inlineRuns(bullet[2], TextRun),
+            bullet: {
+              level: Math.min(
+                5,
+                Math.floor(bullet[1].replace(/\t/g, '  ').length / 2)
+              )
+            },
+            spacing: { after: 80 }
+          }));
+
+          continue;
+        }
+
+        const numbered = raw.match(/^(\s*)\d+[.)]\s+(.*)$/);
+
+        if (numbered) {
+          const level = Math.min(
+            5,
+            Math.floor(numbered[1].replace(/\t/g, '  ').length / 2)
+          );
+
+          children.push(new Paragraph({
+            children: inlineRuns(numbered[2], TextRun),
+            numbering: {
+              reference: 'minutes-numbering',
+              level
+            },
+            spacing: { after: 80 }
+          }));
+
+          continue;
+        }
+
+        const quote = trimmed.match(/^>\s?(.*)$/);
+
+        if (quote) {
+          children.push(new Paragraph({
+            children: inlineRuns(quote[1], TextRun),
+            indent: { left: 420 },
+            border: {
+              left: {
+                style: BorderStyle.SINGLE,
+                size: 12,
+                color: '93C5FD',
+                space: 8
+              }
+            },
+            spacing: { after: 100 }
+          }));
+
+          continue;
+        }
+
+        children.push(new Paragraph({
+          children: inCode
+            ? [new TextRun({ text: raw, font: 'Consolas', size: 18 })]
+            : inlineRuns(trimmed, TextRun),
+          spacing: { after: 120, line: 340 }
+        }));
+      }
+
+      const documentFile = new Document({
+        creator: 'AI議事録ツール',
+        title: 'AI議事録',
+        styles: {
+          default: {
+            document: {
+              run: {
+                font: 'Yu Gothic',
+                size: 22
+              },
+              paragraph: {
+                spacing: {
+                  line: 340,
+                  after: 120
+                }
+              }
+            }
+          }
+        },
+        numbering: {
+          config: [{
+            reference: 'minutes-numbering',
+            levels: Array.from({ length: 6 }, (_, level) => ({
+              level,
+              format: 'decimal',
+              text: `%${level + 1}.`,
+              alignment: 'start',
+              style: {
+                paragraph: {
+                  indent: {
+                    left: 360 * (level + 1),
+                    hanging: 240
+                  }
+                }
+              }
+            }))
+          }]
+        },
+        sections: [{
+          properties: {
+            page: {
+              margin: {
+                top: 1134,
+                right: 1134,
+                bottom: 1134,
+                left: 1134
+              }
+            }
+          },
+          children
+        }]
+      });
+
+      return Packer.toBlob(documentFile);
+    }
+
+    function preparedDocx(markdown) {
+      if (cachedDocxSource === markdown && cachedDocxBlob) {
+        return Promise.resolve(cachedDocxBlob);
+      }
+
+      if (cachedDocxSource === markdown && cachedDocxPromise) {
+        return cachedDocxPromise;
+      }
+
+      cachedDocxSource = markdown;
+
+      cachedDocxPromise = createDocx(markdown)
+        .then(blob => {
+          if (cachedDocxSource === markdown) {
+            cachedDocxBlob = blob;
+          }
+
+          return blob;
+        })
+        .catch(error => {
+          if (cachedDocxSource === markdown) {
+            invalidateDocxCache();
+          }
+
+          throw error;
+        });
+
+      return cachedDocxPromise;
+    }
+
+    $('exportDocxBtn').addEventListener('click', async () => {
+      if (!currentFullSummary.trim()) {
+        notify('出力する議事録がありません。', true);
+        return;
+      }
+
+      try {
+        const blob = await preparedDocx(currentFullSummary);
+
+        if (!blob || blob.size < 1000) {
+          throw new Error('生成されたWordファイルが空です。');
+        }
+
+        await saveBlob(
+          blob,
+          '.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        );
+
+        notify('Wordファイルを出力しました。');
+      } catch (error) {
+        console.error(error);
+        notify(`Word出力に失敗しました: ${error.message}`, true);
+      }
+    });
+
+    $('resetBtn').addEventListener('click', () => {
+      if (!confirm('現在の文字起こしと議事録を消去しますか？')) {
+        return;
+      }
+
+      currentFullTranscript = '';
+      processCounter = 0;
+
+      setSummary('');
+
+      el.transcript.innerHTML = `
+        <p id="transcriptPlaceholder" class="mt-12 text-center text-sm italic text-slate-400">
+          録音または音声ファイルの解析を開始すると、ここに文字起こしが追加されます。
+        </p>
+      `;
+
+      el.transcriptPlaceholder = $('transcriptPlaceholder');
+      el.count.textContent = '0回更新';
+
+      closeSettings();
+      notify('議事録データをリセットしました。');
+    });
+  })();
+  </script>
 </body>
 </html>
