@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.iife.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
   <style>
     body { -webkit-tap-highlight-color: transparent; }
     .recording-pulse { animation: pulse 2s infinite; }
@@ -26,7 +27,7 @@
   <header class="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
     <div class="flex items-center gap-2">
       <span class="rounded-lg bg-blue-800 p-2 text-white"><i data-lucide="mic-2" class="h-5 w-5"></i></span>
-      <div><h1 class="font-bold leading-tight">AI議事録ツール</h1><p class="text-xs text-slate-500">v5.1 · Gemini 4 Argon / Carbon</p></div>
+      <div><h1 class="font-bold leading-tight">AI議事録ツール</h1><p class="text-xs text-slate-500">v5.2 · Gemini 4 Argon / Carbon</p></div>
     </div>
     <div class="flex items-center gap-2">
       <label id="uploadLabel" title="音声ファイルを解析" class="cursor-pointer rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-700 hover:bg-slate-200"><i data-lucide="upload" class="h-5 w-5"></i><input id="audioFileInput" class="hidden" type="file" accept="audio/*"></label>
@@ -79,1107 +80,225 @@
   <script>
   (() => {
     'use strict';
-
-    const MODELS = Object.freeze({
-      TRANSCRIBE: 'gemini-3.5-transcribe',
-      ARGON: 'gemini-4-argon',
-      FINAL_SUMMARY: 'gemini-4-carbon'
-    });
-
-    const STORAGE = Object.freeze({
-      key: 'gemini_api_key_kitakyushu',
-      engine: 'transcribe_engine',
-      theme: 'meeting_theme',
-      participants: 'meeting_participants'
-    });
-
-    let isRecording = false;
-    let isProcessingFile = false;
-    let stream = null;
-    let micStream = null;
-    let sysStream = null;
-    let audioCtx = null;
-    let currentRecorder = null;
-    let chunkTimer = null;
-    let progressTimer = null;
-    let startTime = 0;
-    let currentIntervalSeconds = 300;
-    let processCounter = 0;
-    let supportedMimeType = '';
-    let currentFullTranscript = '';
-    let currentFullSummary = '';
-    let processingQueue = Promise.resolve();
-    let cachedDocxSource = '';
-    let cachedDocxBlob = null;
-    let cachedDocxPromise = null;
-
+    // Gemini 4 は AI Studio の最新モデル。Argon は通常の統合処理、Carbon は最終版に使用する。
+    // 音声文字起こしには、話者分離・Smart transcription を備えた専用モデルを残す。
+    const MODELS = Object.freeze({ TRANSCRIBE: 'gemini-3.5-transcribe', ARGON: 'gemini-4-argon', FINAL_SUMMARY: 'gemini-4-carbon' });
+    const STORAGE = Object.freeze({ key:'gemini_api_key_kitakyushu', engine:'transcribe_engine', theme:'meeting_theme', participants:'meeting_participants' });
+    let isRecording = false, isProcessingFile = false, stream = null, micStream = null, sysStream = null, audioCtx = null, currentRecorder = null;
+    let chunkTimer = null, progressTimer = null, startTime = 0, currentIntervalSeconds = 300, processCounter = 0, supportedMimeType = '';
+    let currentFullTranscript = '', currentFullSummary = '', processingQueue = Promise.resolve(), cachedDocxSource = '', cachedDocxBlob = null, cachedDocxPromise = null;
+    let wakeLock = null, processingJobs = 0;
+    const noSleep = typeof NoSleep !== 'undefined' ? new NoSleep() : null;
     const $ = id => document.getElementById(id);
+    const el = { recordBtn:$('recordBtn'), recordIcon:$('recordIcon'), recordText:$('recordText'), uploadLabel:$('uploadLabel'), audioInput:$('audioFileInput'), status:$('status'), transcript:$('transcriptArea'), transcriptPlaceholder:$('transcriptPlaceholder'), summary:$('summaryContent'), progressWrap:$('progressWrap'), progress:$('progressBar'), count:$('processCount'), settings:$('settingsModal'), apiKey:$('apiKeyInput'), engine:$('engineSelect'), theme:$('themeInput'), participants:$('participantsInput'), mode:$('modeSelect'), interval:$('intervalSelect') };
 
-    const el = {
-      recordBtn: $('recordBtn'),
-      recordIcon: $('recordIcon'),
-      recordText: $('recordText'),
-      uploadLabel: $('uploadLabel'),
-      audioInput: $('audioFileInput'),
-      status: $('status'),
-      transcript: $('transcriptArea'),
-      transcriptPlaceholder: $('transcriptPlaceholder'),
-      summary: $('summaryContent'),
-      progressWrap: $('progressWrap'),
-      progress: $('progressBar'),
-      count: $('processCount'),
-      settings: $('settingsModal'),
-      apiKey: $('apiKeyInput'),
-      engine: $('engineSelect'),
-      theme: $('themeInput'),
-      participants: $('participantsInput'),
-      mode: $('modeSelect'),
-      interval: $('intervalSelect')
-    };
-
-    if (typeof marked !== 'undefined') {
-      marked.setOptions({ gfm: true, breaks: true });
-    }
-
-    if (typeof lucide !== 'undefined') {
-      lucide.createIcons();
-    }
+    if (typeof marked !== 'undefined') marked.setOptions({ gfm:true, breaks:true });
+    if (typeof lucide !== 'undefined') lucide.createIcons();
 
     function notify(message, error = false) {
       const toast = document.createElement('div');
-      toast.className = `toast rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${
-        error
-          ? 'border-l-4 border-red-500 bg-white text-slate-800'
-          : 'bg-blue-800 text-white'
-      }`;
+      toast.className = `toast rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${error ? 'border-l-4 border-red-500 bg-white text-slate-800' : 'bg-blue-800 text-white'}`;
       toast.textContent = message;
       $('toastContainer').append(toast);
       setTimeout(() => toast.remove(), error ? 9000 : 4000);
     }
-
-    function escapeHtml(value) {
-      const d = document.createElement('div');
-      d.textContent = String(value ?? '');
-      return d.innerHTML;
-    }
-
-    function getApiKey() {
-      const key = el.apiKey.value.trim();
-
-      if (!key) {
-        notify('設定から Gemini API キーを入力してください。', true);
-        openSettings();
-        return null;
+    function escapeHtml(value) { const d = document.createElement('div'); d.textContent = String(value ?? ''); return d.innerHTML; }
+    function getApiKey() { const key = el.apiKey.value.trim(); if (!key) { notify('設定から Gemini API キーを入力してください。', true); openSettings(); return null; } return key; }
+    function loadSettings() { const savedEngine = localStorage.getItem(STORAGE.engine); el.apiKey.value = localStorage.getItem(STORAGE.key) || ''; el.engine.value = savedEngine === MODELS.ARGON || savedEngine === MODELS.TRANSCRIBE ? savedEngine : (savedEngine === 'gemini-3.8-flash' ? MODELS.ARGON : MODELS.TRANSCRIBE); el.theme.value = localStorage.getItem(STORAGE.theme) || ''; el.participants.value = localStorage.getItem(STORAGE.participants) || ''; }
+    function saveSetting(key, value) { localStorage.setItem(key, value); }
+    async function keepScreenAwake() {
+      if (document.visibilityState !== 'visible' || wakeLock || (!isRecording && !isProcessingFile && !processingJobs)) return;
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+          try { noSleep?.disable(); } catch (error) { console.warn('NoSleep:', error); }
+          return;
+        } catch (error) { console.warn('Screen Wake Lock:', error); }
       }
-
-      return key;
+      try { noSleep?.enable(); } catch (error) { console.warn('NoSleep:', error); }
     }
-
-    function loadSettings() {
-      const savedEngine = localStorage.getItem(STORAGE.engine);
-
-      el.apiKey.value = localStorage.getItem(STORAGE.key) || '';
-      el.engine.value =
-        savedEngine === MODELS.ARGON || savedEngine === MODELS.TRANSCRIBE
-          ? savedEngine
-          : (savedEngine === 'gemini-3.8-flash' ? MODELS.ARGON : MODELS.TRANSCRIBE);
-      el.theme.value = localStorage.getItem(STORAGE.theme) || '';
-      el.participants.value = localStorage.getItem(STORAGE.participants) || '';
+    function releaseScreenAwakeIfIdle() {
+      if (isRecording || isProcessingFile || processingJobs) return;
+      if (wakeLock) { const lock = wakeLock; wakeLock = null; lock.release().catch(() => {}); }
+      try { noSleep?.disable(); } catch (error) { console.warn('NoSleep:', error); }
     }
-
-    function saveSetting(key, value) {
-      localStorage.setItem(key, value);
-    }
-
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') keepScreenAwake();
+    });
     loadSettings();
-
     el.apiKey.addEventListener('input', e => saveSetting(STORAGE.key, e.target.value.trim()));
     el.engine.addEventListener('change', e => saveSetting(STORAGE.engine, e.target.value));
     el.theme.addEventListener('input', e => saveSetting(STORAGE.theme, e.target.value.trim()));
     el.participants.addEventListener('input', e => saveSetting(STORAGE.participants, e.target.value.trim()));
 
-    function openSettings() {
-      el.settings.classList.remove('hidden');
-      el.settings.classList.add('flex');
-    }
-
-    function closeSettings() {
-      el.settings.classList.add('hidden');
-      el.settings.classList.remove('flex');
-    }
-
-    $('settingsBtn').addEventListener('click', openSettings);
-    $('closeSettingsBtn').addEventListener('click', closeSettings);
-
-    el.settings.addEventListener('click', e => {
-      if (e.target === el.settings) closeSettings();
-    });
+    function openSettings() { el.settings.classList.remove('hidden'); el.settings.classList.add('flex'); }
+    function closeSettings() { el.settings.classList.add('hidden'); el.settings.classList.remove('flex'); }
+    $('settingsBtn').addEventListener('click', openSettings); $('closeSettingsBtn').addEventListener('click', closeSettings);
+    el.settings.addEventListener('click', e => { if (e.target === el.settings) closeSettings(); });
 
     function updateUi(active, file = false) {
       el.recordIcon.setAttribute('data-lucide', active && !file ? 'square' : 'play');
       el.recordText.textContent = active && !file ? '停止' : '開始';
-
-      el.recordBtn.classList.toggle('bg-red-500', active && !file);
-      el.recordBtn.classList.toggle('bg-blue-800', !(active && !file));
-      el.recordBtn.classList.toggle('recording-pulse', active && !file);
-
-      el.recordBtn.disabled = file;
-      el.uploadLabel.classList.toggle('pointer-events-none', active);
-      el.uploadLabel.classList.toggle('opacity-50', active);
-
+      el.recordBtn.classList.toggle('bg-red-500', active && !file); el.recordBtn.classList.toggle('bg-blue-800', !(active && !file)); el.recordBtn.classList.toggle('recording-pulse', active && !file);
+      el.recordBtn.disabled = file; el.uploadLabel.classList.toggle('pointer-events-none', active); el.uploadLabel.classList.toggle('opacity-50', active);
       el.status.textContent = active ? (file ? 'ファイルを解析中' : '録音中') : '待機中';
-      el.status.className = `rounded-full px-2 py-1 text-xs ${
-        active
-          ? (file ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-700')
-          : 'bg-slate-100 text-slate-600'
-      }`;
-
-      el.progressWrap.classList.toggle('hidden', !active);
-
-      if (!active) {
-        el.progress.style.width = '0%';
-      }
-
-      if (active && el.transcriptPlaceholder) {
-        el.transcriptPlaceholder.remove();
-      }
-
-      if (typeof lucide !== 'undefined') {
-        lucide.createIcons();
-      }
+      el.status.className = `rounded-full px-2 py-1 text-xs ${active ? (file ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-700') : 'bg-slate-100 text-slate-600'}`;
+      el.progressWrap.classList.toggle('hidden', !active); if (!active) el.progress.style.width = '0%';
+      if (active && el.transcriptPlaceholder) el.transcriptPlaceholder.remove();
+      if (typeof lucide !== 'undefined') lucide.createIcons();
     }
-
-    function getSupportedMimeType() {
-      return ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
-        .find(type => MediaRecorder.isTypeSupported(type)) || '';
-    }
-
-    function blobToBase64(blob) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-
-        reader.onload = () => resolve(String(reader.result).split(',')[1]);
-        reader.onerror = reject;
-
-        reader.readAsDataURL(blob);
-      });
-    }
-
-    function textFromResponse(data) {
-      return data?.candidates?.[0]?.content?.parts
-        ?.map(p => p.text || '')
-        .join('')
-        .trim() || '';
-    }
-
+    function getSupportedMimeType() { return ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].find(type => MediaRecorder.isTypeSupported(type)) || ''; }
+    function blobToBase64(blob) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(blob); }); }
+    function textFromResponse(data) { return data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim() || ''; }
     async function callGemini(model, apiKey, payload) {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        }
-      );
-
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
       const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
-          `Gemini API エラー（${response.status}）: ${data?.error?.message || '詳細不明'}`
-        );
-      }
-
+      if (!response.ok) throw new Error(`Gemini API エラー [${model}]（${response.status}）: ${data?.error?.message || '詳細不明'}`);
       return data;
     }
-
-    function meetingInfo() {
-      return `テーマ: ${el.theme.value.trim() || '指定なし'}
-参加者: ${el.participants.value.trim() || '指定なし'}`;
-    }
-
-    function invalidateDocxCache() {
-      cachedDocxSource = '';
-      cachedDocxBlob = null;
-      cachedDocxPromise = null;
-    }
-
-    function setSummary(markdown) {
-      currentFullSummary = String(markdown || '').trim();
-      invalidateDocxCache();
-
-      el.summary.innerHTML = currentFullSummary
-        ? (typeof marked !== 'undefined'
-            ? marked.parse(currentFullSummary)
-            : escapeHtml(currentFullSummary).replace(/\n/g, '<br>'))
-        : '<p class="text-slate-400">議事録はまだありません。</p>';
-    }
-
+    function meetingInfo() { return `テーマ: ${el.theme.value.trim() || '指定なし'}\n参加者: ${el.participants.value.trim() || '指定なし'}`; }
+    function invalidateDocxCache() { cachedDocxSource = ''; cachedDocxBlob = null; cachedDocxPromise = null; }
+    function setSummary(markdown) { currentFullSummary = String(markdown || '').trim(); invalidateDocxCache(); el.summary.innerHTML = currentFullSummary ? (typeof marked !== 'undefined' ? marked.parse(currentFullSummary) : escapeHtml(currentFullSummary).replace(/\n/g, '<br>')) : '<p class="text-slate-400">議事録はまだありません。</p>'; }
     function appendTranscript(text, index, isError = false) {
-      const time = new Date().toLocaleTimeString('ja-JP', {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-
-      if (!isError && text) {
-        currentFullTranscript += `[${time} - パート${index}]\n${text}\n\n`;
-      }
-
-      const card = document.createElement('div');
-      card.className = `rounded-lg border p-3 shadow-sm ${
-        isError ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'
-      }`;
-
-      card.innerHTML = `
-        <div class="mb-2 border-b border-slate-100 pb-2 text-xs text-slate-400">
-          #${index} · ${time} 完了
-        </div>
-        <div class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-          ${escapeHtml(text)}
-        </div>
-      `;
-
-      el.transcript.append(card);
-      el.transcript.scrollTop = el.transcript.scrollHeight;
+      const time = new Date().toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+      if (!isError && text) currentFullTranscript += `[${time} - パート${index}]\n${text}\n\n`;
+      const card = document.createElement('div'); card.className = `rounded-lg border p-3 shadow-sm ${isError ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'}`;
+      card.innerHTML = `<div class="mb-2 border-b border-slate-100 pb-2 text-xs text-slate-400">#${index} · ${time} 完了</div><div class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">${escapeHtml(text)}</div>`;
+      el.transcript.append(card); el.transcript.scrollTop = el.transcript.scrollHeight;
     }
 
     async function transcribeAudio(blob, mimeType, apiKey) {
       const audio = await blobToBase64(blob);
-
-      const prompt = `次の音声を正確かつ自然な日本語に文字起こししてください。
-- 話者を判別できる場合のみ、参加者リストを参考に「氏名:」を付ける。確信できない場合は「話者A:」のようにする。
-- フィラーを除き、言い直しは最終的な発言に整える。
-- 内容を要約せず、発言内容を残す。
-${meetingInfo()}`;
-
-      const data = await callGemini(MODELS.TRANSCRIBE, apiKey, {
-        contents: [{
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType, data: audio } }
-          ]
-        }],
-        generationConfig: { temperature: 0 }
-      });
-
-      const transcript = textFromResponse(data);
-
-      if (!transcript) {
+      try {
+        const data = await callGemini(MODELS.TRANSCRIBE, apiKey, { contents:[{ parts:[{ inlineData:{ mimeType, data:audio } }] }], generationConfig:{ audioTranscriptionConfig:{ mode:'SMART', languageCodes:['ja-JP'] } } });
+        const transcript = textFromResponse(data);
+        if (transcript) return transcript;
         throw new Error('文字起こし結果が空でした。');
+      } catch (error) {
+        console.warn('専用文字起こしモデルを利用できないため Argon で再試行します:', error);
+        notify('文字起こしを Gemini 4 Argon で再試行しています。');
+        return transcribeWithArgon(audio, mimeType, apiKey);
       }
-
+    }
+    async function transcribeWithArgon(audio, mimeType, apiKey) {
+      const data = await callGemini(MODELS.ARGON, apiKey, { contents:[{parts:[{text:`この会議音声を、発言を省略せず自然な日本語に文字起こししてください。${meetingInfo()}`},{inlineData:{mimeType,data:audio}}]}] });
+      const transcript = textFromResponse(data);
+      if (!transcript) throw new Error('文字起こし結果が空でした。');
       return transcript;
     }
-
     async function createUpdatedMinutes(transcript, apiKey) {
-      const prompt = `あなたは正確な日本語の議事録作成者です。現在の議事録に今回の文字起こしを統合し、Markdown形式で完全な最新議事録を返してください。
-
-${meetingInfo()}
-
-【厳守】
-- 発言にない事実、担当者、期限、数値を推測・補完しない。
-- 決定事項は明確に合意された内容だけを記載する。
-- ToDoの担当者・期限が不明なら「未定」と記載する。
+      const prompt = `あなたは正確な日本語の議事録作成者です。現在の議事録に今回の文字起こしを統合し、Markdown形式で完全な最新議事録を返してください。\n\n${meetingInfo()}\n\n【厳守】\n- 発言にない事実、担当者、期限、数値を推測・補完しない。\n- 決定事項は明確に合意された内容だけを記載する。\n- ToDoの担当者・期限が不明なら「未定」と記載する。
 - 過去の議事録の事実を削除・改変せず、今回の内容を反映する。
-- 文書は「# 会議名」「## 会議概要」「## 議題別の詳細」「## 決定事項」「## ToDo」「## 未決事項」の順を基本にする。該当内容がない節は「なし」と記載する。
-
-【現在の全体議事録】
-${currentFullSummary || '（まだありません）'}
-
-【今回の文字起こし】
-${transcript}`;
-
-      const data = await callGemini(MODELS.ARGON, apiKey, {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.15,
-          maxOutputTokens: 8192
-        }
-      });
-
-      const minutes = textFromResponse(data);
-
-      if (!minutes) {
-        throw new Error('議事録の生成結果が空でした。');
-      }
-
-      return minutes;
+- 文書は「# 会議名」「## 会議概要」「## 議題別の詳細」「## 決定事項」「## ToDo」「## 未決事項」の順を基本にする。該当内容がない節は「なし」と記載する。\n\n【現在の全体議事録】\n${currentFullSummary || '（まだありません）'}\n\n【今回の文字起こし】\n${transcript}`;
+      const data = await callGemini(MODELS.ARGON, apiKey, { contents:[{ parts:[{ text:prompt }] }], generationConfig:{ temperature:0.15, maxOutputTokens:8192 } });
+      const minutes = textFromResponse(data); if (!minutes) throw new Error('議事録の生成結果が空でした。'); return minutes;
     }
-
     async function processAudio(blob, index, mimeType, apiKey, directAudio = false) {
       try {
         let transcript;
-
         if (directAudio) {
           const audio = await blobToBase64(blob);
-
-          const data = await callGemini(MODELS.ARGON, apiKey, {
-            contents: [{
-              parts: [
-                { text: `この会議音声を文字起こししてください。${meetingInfo()}` },
-                { inlineData: { mimeType, data: audio } }
-              ]
-            }],
-            generationConfig: { temperature: 0 }
-          });
-
-          transcript = textFromResponse(data);
-        } else {
-          transcript = await transcribeAudio(blob, mimeType, apiKey);
-        }
-
+          transcript = await transcribeWithArgon(audio, mimeType, apiKey);
+        } else transcript = await transcribeAudio(blob, mimeType, apiKey);
         const minutes = await createUpdatedMinutes(transcript, apiKey);
-
-        appendTranscript(transcript, index);
-        setSummary(minutes);
-        el.count.textContent = `${index}回更新`;
-      } catch (error) {
-        console.error(error);
-        appendTranscript(`処理に失敗しました。\n${error.message}`, index, true);
-        notify(error.message, true);
-      }
+        appendTranscript(transcript, index); setSummary(minutes); el.count.textContent = `${index}回更新`;
+      } catch (error) { console.error(error); appendTranscript(`処理に失敗しました。\n${error.message}`, index, true); notify(error.message, true); }
+      finally { processingJobs = Math.max(0, processingJobs - 1); releaseScreenAwakeIfIdle(); }
     }
 
     async function startRecording() {
-      const apiKey = getApiKey();
-
-      if (!apiKey) return;
-
-      supportedMimeType = getSupportedMimeType();
-
-      if (!supportedMimeType) {
-        notify('このブラウザは音声録音に対応していません。', true);
-        return;
-      }
-
+      const apiKey = getApiKey(); if (!apiKey) return;
+      supportedMimeType = getSupportedMimeType(); if (!supportedMimeType) { notify('このブラウザは音声録音に対応していません。', true); return; }
+      // iPhone の代替手段はユーザー操作中に開始する必要がある。
+      try { noSleep?.enable(); } catch (error) { console.warn('NoSleep:', error); }
       try {
         if (el.mode.value === 'mix') {
-          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          sysStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: true
-          });
-
-          if (!sysStream.getAudioTracks().length) {
-            throw new Error('共有画面の音声が選択されていません。共有時に音声もオンにしてください。');
-          }
-
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const destination = audioCtx.createMediaStreamDestination();
-
-          audioCtx.createMediaStreamSource(micStream).connect(destination);
-          audioCtx.createMediaStreamSource(sysStream).connect(destination);
-
-          stream = destination.stream;
-
-          sysStream.getVideoTracks()[0].onended = () => {
-            if (isRecording) stopRecording();
-          };
-        } else {
-          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          stream = micStream;
-        }
-
-        isRecording = true;
-        currentIntervalSeconds = Number(el.interval.value);
-
-        updateUi(true);
-        recordLoop(apiKey);
-      } catch (error) {
-        cleanStreams();
-        notify(`録音を開始できませんでした。${error.message ? ` ${error.message}` : ''}`, true);
-      }
+          micStream = await navigator.mediaDevices.getUserMedia({audio:true}); sysStream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+          if (!sysStream.getAudioTracks().length) throw new Error('共有画面の音声が選択されていません。共有時に音声もオンにしてください。');
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)(); const destination = audioCtx.createMediaStreamDestination();
+          audioCtx.createMediaStreamSource(micStream).connect(destination); audioCtx.createMediaStreamSource(sysStream).connect(destination); stream = destination.stream;
+          sysStream.getVideoTracks()[0].onended = () => { if (isRecording) stopRecording(); };
+        } else { micStream = await navigator.mediaDevices.getUserMedia({audio:true}); stream = micStream; }
+        isRecording = true; currentIntervalSeconds = Number(el.interval.value); updateUi(true); await keepScreenAwake(); recordLoop(apiKey);
+      } catch (error) { cleanStreams(); releaseScreenAwakeIfIdle(); notify(`録音を開始できませんでした。${error.message ? ' ' + error.message : ''}`, true); }
     }
-
-    function cleanStreams() {
-      [micStream, sysStream]
-        .filter(Boolean)
-        .forEach(s => s.getTracks().forEach(t => t.stop()));
-
-      micStream = null;
-      sysStream = null;
-      stream = null;
-
-      if (audioCtx) {
-        audioCtx.close();
-        audioCtx = null;
-      }
-    }
-
-    function stopRecording() {
-      isRecording = false;
-
-      clearTimeout(chunkTimer);
-      clearInterval(progressTimer);
-
-      if (currentRecorder?.state !== 'inactive') {
-        currentRecorder.stop();
-      }
-    }
-
-    async function recordLoop(apiKey) {
-      while (isRecording) {
-        await recordChunk(apiKey);
-      }
-
-      cleanStreams();
-      updateUi(false);
-    }
-
-    function recordChunk(apiKey) {
-      return new Promise(resolve => {
-        if (!isRecording) {
-          resolve();
-          return;
-        }
-
-        const parts = [];
-
-        currentRecorder = new MediaRecorder(
-          stream,
-          supportedMimeType ? { mimeType: supportedMimeType } : undefined
-        );
-
-        currentRecorder.ondataavailable = e => {
-          if (e.data.size) parts.push(e.data);
-        };
-
-        currentRecorder.onstop = () => {
-          clearInterval(progressTimer);
-
-          const blob = new Blob(parts, {
-            type: supportedMimeType || 'audio/webm'
-          });
-
-          if (blob.size) {
-            const index = ++processCounter;
-
-            processingQueue = processingQueue.then(() =>
-              processAudio(
-                blob,
-                index,
-                (supportedMimeType || 'audio/webm').split(';')[0],
-                apiKey,
-                el.engine.value === MODELS.ARGON
-              )
-            );
-          }
-
-          resolve();
-        };
-
-        currentRecorder.start();
-        startTime = Date.now();
-
-        progressTimer = setInterval(() => {
-          const percent = Math.min(
-            100,
-            ((Date.now() - startTime) / 1000 / currentIntervalSeconds) * 100
-          );
-
-          el.progress.style.width = `${percent}%`;
-        }, 150);
-
-        chunkTimer = setTimeout(() => {
-          if (currentRecorder?.state !== 'inactive') {
-            currentRecorder.stop();
-          }
-        }, currentIntervalSeconds * 1000);
-      });
-    }
-
-    el.recordBtn.addEventListener('click', () => {
-      if (isRecording) {
-        stopRecording();
-      } else {
-        startRecording();
-      }
-    });
+    function cleanStreams() { [micStream, sysStream].filter(Boolean).forEach(s => s.getTracks().forEach(t => t.stop())); micStream = sysStream = stream = null; if (audioCtx) { audioCtx.close(); audioCtx = null; } }
+    function stopRecording() { isRecording = false; clearTimeout(chunkTimer); clearInterval(progressTimer); if (currentRecorder && currentRecorder.state !== 'inactive') currentRecorder.stop(); }
+    async function recordLoop(apiKey) { while (isRecording) await recordChunk(apiKey); cleanStreams(); updateUi(false); releaseScreenAwakeIfIdle(); }
+    function recordChunk(apiKey) { return new Promise(resolve => {
+      if (!isRecording) return resolve(); const parts = []; currentRecorder = new MediaRecorder(stream, supportedMimeType ? {mimeType:supportedMimeType} : undefined);
+      currentRecorder.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+      currentRecorder.onstop = () => { clearInterval(progressTimer); const blob = new Blob(parts, {type:supportedMimeType || 'audio/webm'}); if (blob.size) { const index = ++processCounter; processingJobs++; processingQueue = processingQueue.then(() => processAudio(blob,index,(supportedMimeType || 'audio/webm').split(';')[0],apiKey,el.engine.value === MODELS.ARGON)); } resolve(); };
+      currentRecorder.start(); startTime = Date.now(); progressTimer = setInterval(() => el.progress.style.width = `${Math.min(100, (Date.now()-startTime)/1000/currentIntervalSeconds*100)}%`, 150);
+      chunkTimer = setTimeout(() => { if (currentRecorder?.state !== 'inactive') currentRecorder.stop(); }, currentIntervalSeconds * 1000);
+    }); }
+    el.recordBtn.addEventListener('click', () => isRecording ? stopRecording() : startRecording());
 
     el.audioInput.addEventListener('change', async e => {
-      const file = e.target.files?.[0];
-      e.target.value = '';
-
-      if (!file) return;
-
-      const apiKey = getApiKey();
-
-      if (!apiKey) return;
-
-      isProcessingFile = true;
-      updateUi(true, true);
-
-      const index = ++processCounter;
-
-      try {
-        await processAudio(
-          file,
-          index,
-          file.type || 'audio/mpeg',
-          apiKey,
-          el.engine.value === MODELS.ARGON
-        );
-      } finally {
-        isProcessingFile = false;
-        updateUi(false);
-      }
+      const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
+      const apiKey = getApiKey(); if (!apiKey) return;
+      isProcessingFile = true; processingJobs++; updateUi(true, true); await keepScreenAwake(); const index = ++processCounter;
+      try { await processAudio(file, index, file.type || 'audio/mpeg', apiKey, el.engine.value === MODELS.ARGON); } finally { isProcessingFile = false; updateUi(false); releaseScreenAwakeIfIdle(); }
     });
 
     $('finalSummaryBtn').addEventListener('click', async () => {
-      if (isRecording) {
-        notify('録音を停止し、処理中の音声解析が完了してから実行してください。', true);
-        return;
-      }
-
-      if (!currentFullTranscript.trim()) {
-        notify('文字起こしデータがありません。', true);
-        return;
-      }
-
-      const apiKey = getApiKey();
-
-      if (!apiKey) return;
-
-      const button = $('finalSummaryBtn');
-
-      button.disabled = true;
-      button.classList.add('opacity-50');
-
+      if (isRecording) { notify('録音を停止し、処理中の音声解析が完了してから実行してください。', true); return; }
+      if (!currentFullTranscript.trim()) { notify('文字起こしデータがありません。', true); return; }
+      const apiKey = getApiKey(); if (!apiKey) return;
+      const button = $('finalSummaryBtn'); button.disabled = true; button.classList.add('opacity-50');
+      processingJobs++; await keepScreenAwake();
       try {
         await processingQueue;
-
-        const prompt = `あなたは提出用の議事録を作成する専門家です。以下の全文字起こしだけに基づき、最終版の議事録をMarkdown形式で作成してください。
-
-${meetingInfo()}
-
-【厳守】
-- 事実を推測しない。担当者・期限が明示されない場合は「未定」とする。
-- 決定事項、ToDo、未決事項を漏れなく構造化する。
-- 会話の背景・理由・条件・数値は重要なものを残す。
-- そのまま共有できる自然で簡潔な日本語にする。
-
-【全文字起こし】
-${currentFullTranscript}`;
-
-        const data = await callGemini(MODELS.FINAL_SUMMARY, apiKey, {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 8192
-          }
-        });
-
-        const summary = textFromResponse(data);
-
-        if (!summary) {
-          throw new Error('最終まとめの生成結果が空でした。');
-        }
-
-        setSummary(summary);
-        notify('Gemini 4 Carbon による最終まとめが完了しました。');
-      } catch (error) {
-        console.error(error);
-        notify(error.message, true);
-      } finally {
-        button.disabled = false;
-        button.classList.remove('opacity-50');
-      }
+        const prompt = `あなたは提出用の議事録を作成する専門家です。以下の全文字起こしだけに基づき、最終版の議事録をMarkdown形式で作成してください。\n\n${meetingInfo()}\n\n【厳守】\n- 事実を推測しない。担当者・期限が明示されない場合は「未定」とする。\n- 決定事項、ToDo、未決事項を漏れなく構造化する。\n- 会話の背景・理由・条件・数値は重要なものを残す。\n- そのまま共有できる自然で簡潔な日本語にする。\n\n【全文字起こし】\n${currentFullTranscript}`;
+        const data = await callGemini(MODELS.FINAL_SUMMARY, apiKey, { contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.1,maxOutputTokens:8192} });
+        const summary = textFromResponse(data); if (!summary) throw new Error('最終まとめの生成結果が空でした。'); setSummary(summary); notify('Gemini 4 Carbon による最終まとめが完了しました。');
+      } catch (error) { console.error(error); notify(error.message, true); } finally { processingJobs--; releaseScreenAwakeIfIdle(); button.disabled = false; button.classList.remove('opacity-50'); }
     });
 
-    function copyText(text, message) {
-      if (!text?.trim()) {
-        notify('コピーする内容がありません。', true);
-        return;
-      }
+    function copyText(text, message) { if (!text?.trim()) return notify('コピーする内容がありません。', true); navigator.clipboard?.writeText(text).then(() => notify(message)).catch(() => { const area = document.createElement('textarea'); area.value=text; document.body.append(area); area.select(); document.execCommand('copy'); area.remove(); notify(message); }); }
+    $('copyTranscriptBtn').addEventListener('click', () => copyText(currentFullTranscript, '文字起こしをコピーしました。'));
+    $('copySummaryBtn').addEventListener('click', () => copyText(currentFullSummary, '議事録をコピーしました。'));
+    async function saveBlob(blob, extension, mime) { const name = `議事録_${new Date().toLocaleDateString('ja-JP').replaceAll('/','')}${extension}`; const file = new File([blob], name, {type:mime}); if (navigator.canShare?.({files:[file]})) { try { await navigator.share({files:[file],title:'AI議事録'}); return; } catch (e) { if (e.name === 'AbortError') return; } } const url = URL.createObjectURL(blob), a = Object.assign(document.createElement('a'), {href:url,download:name}); a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+    $('exportTxtBtn').addEventListener('click', async () => { if (!currentFullSummary.trim()) return notify('出力する議事録がありません。', true); await saveBlob(new Blob(['\uFEFF',currentFullSummary],{type:'text/plain;charset=utf-8'}), '.txt', 'text/plain'); notify('テキストを出力しました。'); });
 
-      navigator.clipboard?.writeText(text)
-        .then(() => notify(message))
-        .catch(() => {
-          const area = document.createElement('textarea');
-
-          area.value = text;
-          document.body.append(area);
-          area.select();
-
-          document.execCommand('copy');
-          area.remove();
-
-          notify(message);
-        });
-    }
-
-    $('copyTranscriptBtn').addEventListener('click', () => {
-      copyText(currentFullTranscript, '文字起こしをコピーしました。');
-    });
-
-    $('copySummaryBtn').addEventListener('click', () => {
-      copyText(currentFullSummary, '議事録をコピーしました。');
-    });
-
-    async function saveBlob(blob, extension, mime) {
-      const name = `議事録_${new Date().toLocaleDateString('ja-JP').replaceAll('/', '')}${extension}`;
-      const file = new File([blob], name, { type: mime });
-
-      if (navigator.canShare?.({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: 'AI議事録'
-          });
-          return;
-        } catch (e) {
-          if (e.name === 'AbortError') return;
-        }
-      }
-
-      const url = URL.createObjectURL(blob);
-      const a = Object.assign(document.createElement('a'), {
-        href: url,
-        download: name
-      });
-
-      a.click();
-
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    }
-
-    $('exportTxtBtn').addEventListener('click', async () => {
-      if (!currentFullSummary.trim()) {
-        notify('出力する議事録がありません。', true);
-        return;
-      }
-
-      await saveBlob(
-        new Blob(['\uFEFF', currentFullSummary], {
-          type: 'text/plain;charset=utf-8'
-        }),
-        '.txt',
-        'text/plain'
-      );
-
-      notify('テキストを出力しました。');
-    });
-
+    // Word は currentFullSummary（画面に表示している原文）だけから組み立てる。
+    // 独自のタイトル・日時を足さないため、Word にだけ別の内容が混ざらない。
     function inlineRuns(value, TextRun) {
-      const source = String(value ?? '');
-      const token = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g;
-
-      let last = 0;
-      let match;
-      const runs = [];
-
-      const plain = text => {
-        if (text) {
-          runs.push(new TextRun({
-            text: text.replace(/\\([\\`*_[\]{}()#+.!|-])/g, '$1')
-          }));
-        }
-      };
-
-      while ((match = token.exec(source))) {
-        plain(source.slice(last, match.index));
-
-        const part = match[0];
-        let text = part;
-        const options = {};
-
-        if (/^\*\*|^__/.test(part)) {
-          text = part.slice(2, -2);
-          options.bold = true;
-        } else if (/^~~/.test(part)) {
-          text = part.slice(2, -2);
-          options.strike = true;
-        } else if (/^`/.test(part)) {
-          text = part.slice(1, -1);
-          options.font = 'Consolas';
-          options.shading = { fill: 'F1F5F9' };
-        } else if (/^\[/.test(part)) {
-          const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-          text = link[1];
-          options.color = '0563C1';
-          options.underline = { type: 'single' };
-        } else {
-          text = part.slice(1, -1);
-          options.italics = true;
-        }
-
-        runs.push(new TextRun({ text, ...options }));
-        last = token.lastIndex;
-      }
-
-      plain(source.slice(last));
-
-      return runs.length ? runs : [new TextRun({ text: '' })];
+      const source = String(value ?? ''); const token = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g; let last = 0, match, runs = [];
+      const plain = text => { if (text) runs.push(new TextRun({text:text.replace(/\\([\\`*_[\]{}()#+.!|-])/g,'$1')})); };
+      while ((match = token.exec(source))) { plain(source.slice(last, match.index)); const part = match[0]; let text=part, options={};
+        if (/^\*\*|^__/.test(part)) { text=part.slice(2,-2); options.bold=true; } else if (/^~~/.test(part)) { text=part.slice(2,-2); options.strike=true; } else if (/^`/.test(part)) { text=part.slice(1,-1); options.font='Consolas'; options.shading={fill:'F1F5F9'}; } else if (/^\[/.test(part)) { const link=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/); text=link[1]; options.color='0563C1'; options.underline={type:'single'}; } else { text=part.slice(1,-1); options.italics=true; }
+        runs.push(new TextRun({text,...options})); last = token.lastIndex;
+      } plain(source.slice(last)); return runs.length ? runs : [new TextRun({text:''})];
     }
-
-    function tableCells(line) {
-      const text = line.trim().replace(/^\|/, '').replace(/\|$/, '');
-      const cells = [];
-
-      let cell = '';
-      let escaped = false;
-
-      for (const char of text) {
-        if (char === '|' && !escaped) {
-          cells.push(cell.trim());
-          cell = '';
-        } else {
-          cell += char;
-        }
-
-        escaped = char === '\\' && !escaped;
-
-        if (char !== '\\') {
-          escaped = false;
-        }
-      }
-
-      cells.push(cell.trim());
-
-      return cells;
-    }
-
-    function isSeparator(line) {
-      const cells = tableCells(line);
-
-      return cells.length && cells.every(c =>
-        /^:?-{3,}:?$/.test(c.replace(/\s/g, ''))
-      );
-    }
-
+    function tableCells(line) { const text=line.trim().replace(/^\|/,'').replace(/\|$/,''); const cells=[]; let cell='', escaped=false; for (const char of text) { if (char === '|' && !escaped) { cells.push(cell.trim()); cell=''; } else { cell += char; } escaped = char === '\\' && !escaped; if (char !== '\\') escaped=false; } cells.push(cell.trim()); return cells; }
+    function isSeparator(line) { const cells=tableCells(line); return cells.length && cells.every(c => /^:?-{3,}:?$/.test(c.replace(/\s/g,''))); }
     async function createDocx(markdown) {
-      if (typeof docx === 'undefined') {
-        throw new Error('Word出力ライブラリを読み込めませんでした。');
+      if (typeof docx === 'undefined') throw new Error('Word出力ライブラリを読み込めませんでした。');
+      const {Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType} = docx;
+      const children=[], lines=String(markdown || '').replace(/\r\n/g,'\n').split('\n'); let inCode=false;
+      const border = {style:BorderStyle.SINGLE,size:4,color:'CBD5E1'};
+      const pushTable = (header, rows) => { const makeRow=(cells, head=false) => new TableRow({children:cells.map(value => new TableCell({width:{size:100/cells.length,type:WidthType.PERCENTAGE},shading:head?{type:ShadingType.CLEAR,fill:'DBEAFE'}:undefined,borders:{top:border,bottom:border,left:border,right:border},children:[new Paragraph({children:inlineRuns(value,TextRun),spacing:{after:60}})]}))}); children.push(new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[makeRow(header,true),...rows.map(row=>makeRow(row))]})); };
+      for (let i=0; i<lines.length; i++) {
+        const raw=lines[i], trimmed=raw.trim();
+        if (/^```/.test(trimmed)) { inCode=!inCode; continue; }
+        if (!inCode && trimmed.includes('|') && i+1 < lines.length && isSeparator(lines[i+1])) { const header=tableCells(raw), rows=[]; i+=2; while (i<lines.length && lines[i].trim().includes('|') && !/^\s*$/.test(lines[i])) { rows.push(tableCells(lines[i])); i++; } i--; pushTable(header,rows); continue; }
+        if (!trimmed) { children.push(new Paragraph({text:'',spacing:{after:80}})); continue; }
+        const heading=trimmed.match(/^(#{1,6})\s+(.+)$/); if (heading) { const levels=[HeadingLevel.HEADING_1,HeadingLevel.HEADING_2,HeadingLevel.HEADING_3,HeadingLevel.HEADING_4,HeadingLevel.HEADING_5,HeadingLevel.HEADING_6]; children.push(new Paragraph({children:inlineRuns(heading[2],TextRun),heading:levels[heading[1].length-1],keepNext:true,spacing:{before:240,after:120}})); continue; }
+        if (/^([-*_])\1\1+$/.test(trimmed)) { children.push(new Paragraph({thematicBreak:true})); continue; }
+        const bullet=raw.match(/^(\s*)[-+*]\s+(.*)$/); if (bullet) { children.push(new Paragraph({children:inlineRuns(bullet[2],TextRun),bullet:{level:Math.min(5,Math.floor(bullet[1].replace(/\t/g,'  ').length/2))},spacing:{after:80}})); continue; }
+        const numbered=raw.match(/^(\s*)\d+[.)]\s+(.*)$/); if (numbered) { const level=Math.min(5,Math.floor(numbered[1].replace(/\t/g,'  ').length/2)); children.push(new Paragraph({children:inlineRuns(numbered[2],TextRun),numbering:{reference:'minutes-numbering',level},spacing:{after:80}})); continue; }
+        const quote=trimmed.match(/^>\s?(.*)$/); if (quote) { children.push(new Paragraph({children:inlineRuns(quote[1],TextRun),indent:{left:420},border:{left:{style:BorderStyle.SINGLE,size:12,color:'93C5FD',space:8}},spacing:{after:100}})); continue; }
+        children.push(new Paragraph({children:inCode?[new TextRun({text:raw,font:'Consolas',size:18})]:inlineRuns(trimmed,TextRun),spacing:{after:120,line:340}}));
       }
-
-      const {
-        Document,
-        Packer,
-        Paragraph,
-        TextRun,
-        HeadingLevel,
-        Table,
-        TableRow,
-        TableCell,
-        WidthType,
-        BorderStyle,
-        ShadingType
-      } = docx;
-
-      const children = [];
-      const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
-
-      let inCode = false;
-
-      const border = {
-        style: BorderStyle.SINGLE,
-        size: 4,
-        color: 'CBD5E1'
-      };
-
-      const pushTable = (header, rows) => {
-        const makeRow = (cells, head = false) => new TableRow({
-          children: cells.map(value => new TableCell({
-            width: {
-              size: 100 / cells.length,
-              type: WidthType.PERCENTAGE
-            },
-            shading: head
-              ? { type: ShadingType.CLEAR, fill: 'DBEAFE' }
-              : undefined,
-            borders: {
-              top: border,
-              bottom: border,
-              left: border,
-              right: border
-            },
-            children: [
-              new Paragraph({
-                children: inlineRuns(value, TextRun),
-                spacing: { after: 60 }
-              })
-            ]
-          }))
-        });
-
-        children.push(new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          rows: [
-            makeRow(header, true),
-            ...rows.map(row => makeRow(row))
-          ]
-        }));
-      };
-
-      for (let i = 0; i < lines.length; i++) {
-        const raw = lines[i];
-        const trimmed = raw.trim();
-
-        if (/^```/.test(trimmed)) {
-          inCode = !inCode;
-          continue;
-        }
-
-        if (
-          !inCode &&
-          trimmed.includes('|') &&
-          i + 1 < lines.length &&
-          isSeparator(lines[i + 1])
-        ) {
-          const header = tableCells(raw);
-          const rows = [];
-
-          i += 2;
-
-          while (
-            i < lines.length &&
-            lines[i].trim().includes('|') &&
-            !/^\s*$/.test(lines[i])
-          ) {
-            rows.push(tableCells(lines[i]));
-            i++;
-          }
-
-          i--;
-
-          pushTable(header, rows);
-          continue;
-        }
-
-        if (!trimmed) {
-          children.push(new Paragraph({
-            text: '',
-            spacing: { after: 80 }
-          }));
-          continue;
-        }
-
-        const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-
-        if (heading) {
-          const levels = [
-            HeadingLevel.HEADING_1,
-            HeadingLevel.HEADING_2,
-            HeadingLevel.HEADING_3,
-            HeadingLevel.HEADING_4,
-            HeadingLevel.HEADING_5,
-            HeadingLevel.HEADING_6
-          ];
-
-          children.push(new Paragraph({
-            children: inlineRuns(heading[2], TextRun),
-            heading: levels[heading[1].length - 1],
-            keepNext: true,
-            spacing: { before: 240, after: 120 }
-          }));
-
-          continue;
-        }
-
-        if (/^([-*_])\1\1+$/.test(trimmed)) {
-          children.push(new Paragraph({ thematicBreak: true }));
-          continue;
-        }
-
-        const bullet = raw.match(/^(\s*)[-+*]\s+(.*)$/);
-
-        if (bullet) {
-          children.push(new Paragraph({
-            children: inlineRuns(bullet[2], TextRun),
-            bullet: {
-              level: Math.min(
-                5,
-                Math.floor(bullet[1].replace(/\t/g, '  ').length / 2)
-              )
-            },
-            spacing: { after: 80 }
-          }));
-
-          continue;
-        }
-
-        const numbered = raw.match(/^(\s*)\d+[.)]\s+(.*)$/);
-
-        if (numbered) {
-          const level = Math.min(
-            5,
-            Math.floor(numbered[1].replace(/\t/g, '  ').length / 2)
-          );
-
-          children.push(new Paragraph({
-            children: inlineRuns(numbered[2], TextRun),
-            numbering: {
-              reference: 'minutes-numbering',
-              level
-            },
-            spacing: { after: 80 }
-          }));
-
-          continue;
-        }
-
-        const quote = trimmed.match(/^>\s?(.*)$/);
-
-        if (quote) {
-          children.push(new Paragraph({
-            children: inlineRuns(quote[1], TextRun),
-            indent: { left: 420 },
-            border: {
-              left: {
-                style: BorderStyle.SINGLE,
-                size: 12,
-                color: '93C5FD',
-                space: 8
-              }
-            },
-            spacing: { after: 100 }
-          }));
-
-          continue;
-        }
-
-        children.push(new Paragraph({
-          children: inCode
-            ? [new TextRun({ text: raw, font: 'Consolas', size: 18 })]
-            : inlineRuns(trimmed, TextRun),
-          spacing: { after: 120, line: 340 }
-        }));
-      }
-
-      const documentFile = new Document({
-        creator: 'AI議事録ツール',
-        title: 'AI議事録',
-        styles: {
-          default: {
-            document: {
-              run: {
-                font: 'Yu Gothic',
-                size: 22
-              },
-              paragraph: {
-                spacing: {
-                  line: 340,
-                  after: 120
-                }
-              }
-            }
-          }
-        },
-        numbering: {
-          config: [{
-            reference: 'minutes-numbering',
-            levels: Array.from({ length: 6 }, (_, level) => ({
-              level,
-              format: 'decimal',
-              text: `%${level + 1}.`,
-              alignment: 'start',
-              style: {
-                paragraph: {
-                  indent: {
-                    left: 360 * (level + 1),
-                    hanging: 240
-                  }
-                }
-              }
-            }))
-          }]
-        },
-        sections: [{
-          properties: {
-            page: {
-              margin: {
-                top: 1134,
-                right: 1134,
-                bottom: 1134,
-                left: 1134
-              }
-            }
-          },
-          children
-        }]
-      });
-
+      const documentFile = new Document({creator:'AI議事録ツール',title:'AI議事録',styles:{default:{document:{run:{font:'Yu Gothic',size:22},paragraph:{spacing:{line:340,after:120}}}}},numbering:{config:[{reference:'minutes-numbering',levels:Array.from({length:6},(_,level)=>({level,format:'decimal',text:`%${level+1}.`,alignment:'start',style:{paragraph:{indent:{left:360*(level+1),hanging:240}}}}))}]},sections:[{properties:{page:{margin:{top:1134,right:1134,bottom:1134,left:1134}}},children}]});
       return Packer.toBlob(documentFile);
     }
+    function preparedDocx(markdown) { if (cachedDocxSource === markdown && cachedDocxBlob) return Promise.resolve(cachedDocxBlob); if (cachedDocxSource === markdown && cachedDocxPromise) return cachedDocxPromise; cachedDocxSource=markdown; cachedDocxPromise=createDocx(markdown).then(blob => { if (cachedDocxSource===markdown) cachedDocxBlob=blob; return blob; }).catch(error => { if (cachedDocxSource===markdown) invalidateDocxCache(); throw error; }); return cachedDocxPromise; }
+    $('exportDocxBtn').addEventListener('click', async () => { if (!currentFullSummary.trim()) return notify('出力する議事録がありません。', true); try { const blob=await preparedDocx(currentFullSummary); if (!blob || blob.size < 1000) throw new Error('生成されたWordファイルが空です。'); await saveBlob(blob,'.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document'); notify('Wordファイルを出力しました。'); } catch (error) { console.error(error); notify(`Word出力に失敗しました: ${error.message}`, true); } });
 
-    function preparedDocx(markdown) {
-      if (cachedDocxSource === markdown && cachedDocxBlob) {
-        return Promise.resolve(cachedDocxBlob);
-      }
-
-      if (cachedDocxSource === markdown && cachedDocxPromise) {
-        return cachedDocxPromise;
-      }
-
-      cachedDocxSource = markdown;
-
-      cachedDocxPromise = createDocx(markdown)
-        .then(blob => {
-          if (cachedDocxSource === markdown) {
-            cachedDocxBlob = blob;
-          }
-
-          return blob;
-        })
-        .catch(error => {
-          if (cachedDocxSource === markdown) {
-            invalidateDocxCache();
-          }
-
-          throw error;
-        });
-
-      return cachedDocxPromise;
-    }
-
-    $('exportDocxBtn').addEventListener('click', async () => {
-      if (!currentFullSummary.trim()) {
-        notify('出力する議事録がありません。', true);
-        return;
-      }
-
-      try {
-        const blob = await preparedDocx(currentFullSummary);
-
-        if (!blob || blob.size < 1000) {
-          throw new Error('生成されたWordファイルが空です。');
-        }
-
-        await saveBlob(
-          blob,
-          '.docx',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        );
-
-        notify('Wordファイルを出力しました。');
-      } catch (error) {
-        console.error(error);
-        notify(`Word出力に失敗しました: ${error.message}`, true);
-      }
-    });
-
-    $('resetBtn').addEventListener('click', () => {
-      if (!confirm('現在の文字起こしと議事録を消去しますか？')) {
-        return;
-      }
-
-      currentFullTranscript = '';
-      processCounter = 0;
-
-      setSummary('');
-
-      el.transcript.innerHTML = `
-        <p id="transcriptPlaceholder" class="mt-12 text-center text-sm italic text-slate-400">
-          録音または音声ファイルの解析を開始すると、ここに文字起こしが追加されます。
-        </p>
-      `;
-
-      el.transcriptPlaceholder = $('transcriptPlaceholder');
-      el.count.textContent = '0回更新';
-
-      closeSettings();
-      notify('議事録データをリセットしました。');
-    });
+    $('resetBtn').addEventListener('click', () => { if (!confirm('現在の文字起こしと議事録を消去しますか？')) return; currentFullTranscript=''; processCounter=0; setSummary(''); el.transcript.innerHTML='<p id="transcriptPlaceholder" class="mt-12 text-center text-sm italic text-slate-400">録音または音声ファイルの解析を開始すると、ここに文字起こしが追加されます。</p>'; el.transcriptPlaceholder=$('transcriptPlaceholder'); el.count.textContent='0回更新'; closeSettings(); notify('議事録データをリセットしました。'); });
   })();
   </script>
 </body>
